@@ -148,24 +148,7 @@ print("[INFO] Starting MFW build")
 print(f"\n\n[DEBUG] base_command: {base_command}\n\n")
 PyInstaller.__main__.run(base_command)
 
-# === 二进制文件处理 ===
-# 收集 MAA 的本地库文件
-bin_dir = os.path.join(maa_path, "bin")
-bin_files = []
-for f in os.listdir(bin_dir):
-    print(f"[DEBUG] Found binary file: {f}")
-    print(f"[DEBUG] Adding binary file: {os.path.join(bin_dir, f)}")
-    bin_files.append(f)
-    base_command += [f"--add-binary={os.path.join(bin_dir, f)}{os.pathsep}."]
-
-
-# === 开始构建 ===
-print("[INFO] Starting MFW build")
-print(f"\n\n[DEBUG] base_command: {base_command}\n\n")
-PyInstaller.__main__.run(base_command)
-
 # === 构建后处理 ===
-# 复制TEM_files的内容到 dist/MFW 目录
 dist_dir = os.path.join(os.getcwd(), "dist", "MFW")
 internal_dir = os.path.join(dist_dir, "_internal")
 temp_files_dir = os.path.join(internal_dir, "TEM_files")
@@ -175,33 +158,27 @@ if os.path.isdir(temp_files_dir):
 else:
     print(f"[WARN] Temporary files directory not found: {temp_files_dir}")
 
-
-for i in bin_files:
-    src_binary = os.path.join(dist_dir, "_internal", i)
-    dst_binary = os.path.join(dist_dir, i)
-    if os.path.exists(src_binary):
-        shutil.copy(src_binary, dst_binary)
-        os.remove(src_binary)
-    else:
-        print(f"[WARN] Expected binary missing: {src_binary}")
-
 maa_bin_internal = os.path.join(internal_dir, "maa", "bin")
 if os.path.isdir(maa_bin_internal):
     shutil.rmtree(maa_bin_internal)
 
 # 复制README和许可证
-shutil.copy(
-    os.path.join(os.getcwd(), "README.md"),
-    os.path.join(os.getcwd(), "dist", "MFW", "MFW_README.md"),
-)
-shutil.copy(
-    os.path.join(os.getcwd(), "README-en.md"),
-    os.path.join(os.getcwd(), "dist", "MFW", "MFW_README-en.md"),
-)
-shutil.copy(
-    os.path.join(os.getcwd(), "LICENSE"),
-    os.path.join(os.getcwd(), "dist", "MFW", "MFW_LICENSE"),
-)
+if os.path.isdir(dist_dir):
+    shutil.copy(
+        os.path.join(os.getcwd(), "README.md"),
+        os.path.join(dist_dir, "MFW_README.md"),
+    )
+    shutil.copy(
+        os.path.join(os.getcwd(), "README-en.md"),
+        os.path.join(dist_dir, "MFW_README-en.md"),
+    )
+    shutil.copy(
+        os.path.join(os.getcwd(), "LICENSE"),
+        os.path.join(dist_dir, "MFW_LICENSE"),
+    )
+else:
+    print(f"[ERROR] dist/MFW directory not found: {dist_dir}")
+    sys.exit(1)
 
 # 复制插件目录（若存在）
 plugins_dir = os.path.join(os.getcwd(), "plugins")
