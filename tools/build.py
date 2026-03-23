@@ -50,8 +50,8 @@ os.chdir(project_root)
 print(f"[INFO] working directory has been set to: {os.getcwd()}")
 
 # 删除dist
-if os.path.exists(os.path.join(os.getcwd(), "dist", "MFW")):
-    shutil.rmtree(os.path.join(os.getcwd(), "dist", "MFW"))
+if os.path.exists(os.path.join(os.getcwd(), "dist", "MAH")):
+    shutil.rmtree(os.path.join(os.getcwd(), "dist", "MAH"))
 
 # 获取参数
 # === 构建参数处理 ===
@@ -124,7 +124,7 @@ if sys.platform == "darwin":
         base_command += ["--target-arch=universal2"]
         print("[DEBUG] Target arch: universal2")
     base_command += [
-        "--osx-bundle-identifier=com.overflow65537.MFW",
+        "--osx-bundle-identifier=com.overflow65537.MAH",
         "--noconsole",  # 禁用控制台窗口
     ]
 
@@ -144,7 +144,7 @@ elif sys.platform == "linux":
         "--noconsole",
     ]  # 禁用控制台窗口
 # === 开始构建 ===
-print("[INFO] Starting MFW build")
+print("[INFO] Starting MAH build")
 print(f"\n\n[DEBUG] base_command: {base_command}\n\n")
 
 # 用 subprocess 调用 pyinstaller，以便捕获所有输出
@@ -157,12 +157,12 @@ if result.returncode != 0:
     sys.exit(result.returncode)
 
 # 检查构建是否成功
-if not os.path.isdir(os.path.join(os.getcwd(), "dist", "MFW")):
-    print("[ERROR] PyInstaller failed to generate dist/MFW directory")
+if not os.path.isdir(os.path.join(os.getcwd(), "dist", "MAH")):
+    print("[ERROR] PyInstaller failed to generate dist/MAH directory")
     sys.exit(1)
 
 # === 构建后处理 ===
-dist_dir = os.path.join(os.getcwd(), "dist", "MFW")
+dist_dir = os.path.join(os.getcwd(), "dist", "MAH")
 internal_dir = os.path.join(dist_dir, "_internal")
 temp_files_dir = os.path.join(internal_dir, "TEM_files")
 if os.path.isdir(temp_files_dir):
@@ -179,34 +179,34 @@ if os.path.isdir(maa_bin_internal):
 if os.path.isdir(dist_dir):
     shutil.copy(
         os.path.join(os.getcwd(), "README.md"),
-        os.path.join(dist_dir, "MFW_README.md"),
+        os.path.join(dist_dir, "MAH_README.md"),
     )
     shutil.copy(
         os.path.join(os.getcwd(), "README-en.md"),
-        os.path.join(dist_dir, "MFW_README-en.md"),
+        os.path.join(dist_dir, "MAH_README-en.md"),
     )
     shutil.copy(
         os.path.join(os.getcwd(), "LICENSE"),
-        os.path.join(dist_dir, "MFW_LICENSE"),
+        os.path.join(dist_dir, "MAH_LICENSE"),
     )
 else:
-    print(f"[ERROR] dist/MFW directory not found: {dist_dir}")
+    print(f"[ERROR] dist/MAH directory not found: {dist_dir}")
     sys.exit(1)
 
 # 复制插件目录（若存在）
 plugins_dir = os.path.join(os.getcwd(), "plugins")
-dist_plugins_dir = os.path.join(os.getcwd(), "dist", "MFW", "plugins")
+dist_plugins_dir = os.path.join(os.getcwd(), "dist", "MAH", "plugins")
 if os.path.isdir(plugins_dir):
     shutil.copytree(plugins_dir, dist_plugins_dir, dirs_exist_ok=True)
     print(f"[INFO] Plugins copied to: {dist_plugins_dir}")
 else:
     print(f"[WARN] Plugins directory not found, skipping: {plugins_dir}")
 
-os.makedirs(os.path.join(os.getcwd(), "dist", "MFW", "app", "i18n"), exist_ok=True)
+os.makedirs(os.path.join(os.getcwd(), "dist", "MAH", "app", "i18n"), exist_ok=True)
 # 复制i18n文件
 for qm_file in ["i18n.zh_CN.qm", "i18n.zh_HK.qm", "i18n.ja_JP.qm"]:
     src_qm = os.path.join(os.getcwd(), "app", "i18n", qm_file)
-    dst_qm = os.path.join(os.getcwd(), "dist", "MFW", "app", "i18n", qm_file)
+    dst_qm = os.path.join(os.getcwd(), "dist", "MAH", "app", "i18n", qm_file)
     if os.path.exists(src_qm):
         shutil.copy(src_qm, dst_qm)
     else:
@@ -215,20 +215,20 @@ for qm_file in ["i18n.zh_CN.qm", "i18n.zh_HK.qm", "i18n.ja_JP.qm"]:
 # === 构建updater ===
 updater_command = [
     "updater.py",
-    "--name=MFWUpdater",
+    "--name=MAHUpdater",
     "--onefile",
     "--clean",
     "--noconfirm",  # 禁用确认提示
     "--distpath",
-    os.path.join("dist", "MFW"),
+    os.path.join("dist", "MAH"),
 ]
-print("[INFO] Starting MFWUpdater build")
+print("[INFO] Starting MAHUpdater build")
 cmd = [sys.executable, "-m", "PyInstaller"] + updater_command
 result = subprocess.run(cmd, cwd=os.getcwd())
 if result.returncode != 0:
-    print(f"[WARN] MFWUpdater build failed with exit code {result.returncode}, continuing anyway")
+    print(f"[WARN] MAHUpdater build failed with exit code {result.returncode}, continuing anyway")
 else:
-    print("[INFO] MFWUpdater build completed successfully")
+    print("[INFO] MAHUpdater build completed successfully")
 
 
 def generate_file_list(input_dir, output_file=None):
@@ -294,5 +294,5 @@ def generate_file_list(input_dir, output_file=None):
 
 # 生成包含文件列表
 generate_file_list(
-    os.path.join("dist", "MFW"), os.path.join("dist", "MFW", "file_list.txt")
+    os.path.join("dist", "MAH"), os.path.join("dist", "MAH", "file_list.txt")
 )

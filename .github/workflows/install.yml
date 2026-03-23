@@ -226,7 +226,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MAHUI-${{ matrix.platform }}-${{ matrix.arch }}
-          path: "dist/MFW/"
+          path: "dist/MAH/"
 
 
   release:
