@@ -341,6 +341,8 @@ class OptionFormWidget(QWidget):
         result = {}
         
         for key, option_item in self.option_items.items():
+            if bool(option_item.config.get("non_persistent", False)):
+                continue
             result[key] = option_item.get_option()
         
         return result
@@ -354,6 +356,8 @@ class OptionFormWidget(QWidget):
         result = {}
         
         for key, option_item in self.option_items.items():
+            if bool(option_item.config.get("non_persistent", False)):
+                continue
             result[key] = option_item.get_simple_option()
         
         return result

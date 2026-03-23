@@ -18,7 +18,11 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QListWidget,
+    QListWidgetItem,
+    QAbstractItemView,
     QHBoxLayout,
+    QCheckBox,
     QProgressBar,
     QLabel,
     QDialog,
@@ -77,6 +81,130 @@ from app.view.setting_interface.widget.NoticeType import (
 _CONTACT_URL_PATTERN = re.compile(r"(?:https?://|www\.)[^\s，,]+")
 # 检测已经是 Markdown 链接格式的文本： [text](url)
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+class PluginSidebarCustomizationDialog(QDialog):
+    """插件侧栏显示与启用管理对话框。"""
+
+    def __init__(self, plugin_items: list[dict], parent=None):
+        super().__init__(parent)
+        self.setObjectName("pluginSidebarCustomizationDialog")
+        self.setWindowTitle(self.tr("Custom sidebar plugin display"))
+        self.resize(620, 460)
+        self._enabled_boxes: dict[str, QCheckBox] = {}
+        self.setStyleSheet(
+            "QDialog#pluginSidebarCustomizationDialog QFrame[row='true'] {"
+            " border-radius: 8px;"
+            " border: none;"
+            " background: rgba(255, 255, 255, 0.08);"
+            "}"
+            "QDialog#pluginSidebarCustomizationDialog QFrame[row='true']:hover {"
+            " background: rgba(255, 255, 255, 0.12);"
+            "}"
+        )
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(16, 16, 16, 16)
+        root_layout.setSpacing(12)
+
+        hint = QLabel(
+            self.tr(
+                "Configure plugin enabled status and drag to reorder plugin display priority. Plugins beyond sidebar limit will be grouped into Plugin Collection."
+            )
+        )
+        hint.setWordWrap(True)
+        root_layout.addWidget(hint)
+
+        self._list_widget = QListWidget(self)
+        self._list_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self._list_widget.setSpacing(8)
+        self._list_widget.setFrameShape(QFrame.Shape.NoFrame)
+        self._list_widget.setStyleSheet(
+            "QListWidget { background: transparent; border: none; }"
+            "QListWidget::item { background: transparent; border: none; }"
+            "QListWidget::item:selected { background: transparent; }"
+        )
+
+        for item in plugin_items:
+            plugin_id = str(item.get("plugin_id", ""))
+
+            row_widget = QFrame(self._list_widget)
+            row_widget.setProperty("row", "true")
+            row_widget.setMinimumHeight(54)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(12, 8, 12, 8)
+            row_layout.setSpacing(12)
+
+            left_panel = QWidget(row_widget)
+            left_layout = QVBoxLayout(left_panel)
+            left_layout.setContentsMargins(0, 0, 0, 0)
+            left_layout.setSpacing(2)
+
+            name_label = QLabel(str(item.get("name", "")), left_panel)
+            name_label.setMinimumWidth(220)
+            name_label.setStyleSheet("background: transparent;")
+            desc_text = str(item.get("description", "")).strip() or str(
+                item.get("plugin_id", "")
+            )
+            desc_label = QLabel(desc_text, left_panel)
+            desc_label.setStyleSheet(
+                "color: rgba(255, 255, 255, 0.70); background: transparent;"
+            )
+
+            drag_hint = QLabel("↕", row_widget)
+            drag_hint.setStyleSheet(
+                "color: rgba(255, 255, 255, 0.55); background: transparent;"
+            )
+            drag_hint.setToolTip(self.tr("Drag to reorder"))
+
+            left_layout.addWidget(name_label)
+            left_layout.addWidget(desc_label)
+
+            enabled_box = QCheckBox(self.tr("Enable"), row_widget)
+            enabled_box.setChecked(bool(item.get("enabled", True)))
+
+            row_layout.addWidget(drag_hint)
+            row_layout.addWidget(left_panel)
+            row_layout.addStretch(1)
+            row_layout.addWidget(enabled_box)
+
+            row_item = QListWidgetItem(self._list_widget)
+            row_item.setData(Qt.ItemDataRole.UserRole, plugin_id)
+            row_item.setSizeHint(row_widget.sizeHint())
+            self._list_widget.addItem(row_item)
+            self._list_widget.setItemWidget(row_item, row_widget)
+
+            self._enabled_boxes[plugin_id] = enabled_box
+
+        root_layout.addWidget(self._list_widget)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root_layout.addWidget(buttons)
+
+    def get_result(self) -> list[dict]:
+        result: list[dict] = []
+        for index in range(self._list_widget.count()):
+            item = self._list_widget.item(index)
+            plugin_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+            if not plugin_id:
+                continue
+            enabled_box = self._enabled_boxes.get(plugin_id)
+            result.append(
+                {
+                    "plugin_id": plugin_id,
+                    "enabled": enabled_box.isChecked() if enabled_box else True,
+                }
+            )
+        return result
 
 
 def start_auto_confirm_countdown(
@@ -1436,11 +1564,103 @@ class SettingInterface(QWidget):
             on_value_changed=self._on_log_max_images_changed,
         )
 
+        self.import_plugin_card = PrimaryPushSettingCard(
+            text=self.tr("Import"),
+            icon=FIF.FOLDER_ADD,
+            title=self.tr("Import plugin"),
+            content=self.tr(
+                "Import Python plugin file (*.py). Plugin entries will be shown in the left navigation bar."
+            ),
+            parent=self.compatibility_group,
+        )
+
+        self.scan_plugins_card = PrimaryPushSettingCard(
+            text=self.tr("Scan"),
+            icon=FIF.SYNC,
+            title=self.tr("Scan plugins"),
+            content=self.tr("Scan plugin directory and load available plugins"),
+            parent=self.compatibility_group,
+        )
+
+        self.customize_plugin_sidebar_card = PrimaryPushSettingCard(
+            text=self.tr("Customize"),
+            icon=FIF.SETTING,
+            title=self.tr("Custom sidebar plugin display"),
+            content=self.tr(
+                "Customize plugin visibility and drag order. Extra plugins are grouped into Plugin Collection."
+            ),
+            parent=self.compatibility_group,
+        )
+
+        self.plugin_sidebar_max_visible_card = SliderSettingCard(
+            FIF.APPLICATION,
+            self.tr("Max sidebar plugins"),
+            self.tr("Set how many plugins are displayed directly in the sidebar"),
+            parent=self.compatibility_group,
+            minimum=1,
+            maximum=10,
+            step=1,
+            config_item=cfg.plugin_sidebar_max_visible,
+            on_value_changed=self._on_plugin_sidebar_max_visible_changed,
+        )
+
         self.compatibility_group.addSettingCard(self.multi_resource_adaptation_card)
         self.compatibility_group.addSettingCard(self.save_screenshot_card)
         self.compatibility_group.addSettingCard(self.log_zip_include_images_card)
         self.compatibility_group.addSettingCard(self.log_max_images_card)
+        self.compatibility_group.addSettingCard(self.import_plugin_card)
+        self.compatibility_group.addSettingCard(self.scan_plugins_card)
+        self.compatibility_group.addSettingCard(self.customize_plugin_sidebar_card)
+        self.compatibility_group.addSettingCard(self.plugin_sidebar_max_visible_card)
         self.add_setting_group(self.compatibility_group)
+
+    def _on_import_plugin_clicked(self):
+        """从实验性功能导入插件文件。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Select plugin file"),
+            str(Path.home()),
+            self.tr("Python Files (*.py)"),
+        )
+        if not path:
+            return
+        signalBus.plugin_import_requested.emit(path)
+
+    def _on_scan_plugins_clicked(self):
+        """请求主窗口扫描并加载插件目录。"""
+        signalBus.plugin_scan_requested.emit()
+
+    def _on_customize_plugin_sidebar_clicked(self):
+        """打开插件侧栏显示自定义对话框。"""
+        main_window = self.window()
+        if main_window is None or not hasattr(
+            main_window, "get_plugin_customization_snapshot"
+        ):
+            signalBus.info_bar_requested.emit(
+                "warning", self.tr("Plugin customization is currently unavailable")
+            )
+            return
+
+        plugin_items = main_window.get_plugin_customization_snapshot()
+        if not plugin_items:
+            signalBus.info_bar_requested.emit(
+                "info", self.tr("No plugins loaded")
+            )
+            return
+
+        dialog = PluginSidebarCustomizationDialog(plugin_items, self.window() or self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        if hasattr(main_window, "apply_plugin_customization"):
+            main_window.apply_plugin_customization(dialog.get_result())
+            signalBus.info_bar_requested.emit(
+                "success", self.tr("Plugin sidebar customization applied")
+            )
+
+    def _on_plugin_sidebar_max_visible_changed(self, value: int):
+        """侧栏插件显示上限变化时，通知主界面实时刷新。"""
+        signalBus.plugin_sidebar_limit_changed.emit(int(value))
 
     def _initialize_proxy_controls(self):
         """初始化代理控制器展示及默认值。"""
@@ -2338,6 +2558,11 @@ class SettingInterface(QWidget):
         )
         self.save_screenshot_card.checkedChanged.connect(
             self._on_save_screenshot_changed
+        )
+        self.import_plugin_card.clicked.connect(self._on_import_plugin_clicked)
+        self.scan_plugins_card.clicked.connect(self._on_scan_plugins_clicked)
+        self.customize_plugin_sidebar_card.clicked.connect(
+            self._on_customize_plugin_sidebar_clicked
         )
         self._apply_theme_from_config()
 

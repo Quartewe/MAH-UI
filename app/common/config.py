@@ -136,6 +136,15 @@ class Config(QConfig):
     save_screenshot = ConfigItem(
         "Compatibility", "save_screenshot", False, BoolValidator()
     )
+    plugin_sidebar_preferred = ConfigItem(
+        "Compatibility", "plugin_sidebar_preferred", ""
+    )
+    plugin_enabled_overrides = ConfigItem(
+        "Compatibility", "plugin_enabled_overrides", ""
+    )
+    plugin_sidebar_max_visible = RangeConfigItem(
+        "Compatibility", "plugin_sidebar_max_visible", 3, RangeValidator(1, 10)
+    )
     special_task_tutorial_shown = ConfigItem(
         "General", "special_task_tutorial_shown", False, BoolValidator()
     )

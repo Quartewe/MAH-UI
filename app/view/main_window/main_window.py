@@ -73,6 +73,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QWidget,
+    QFrame,
     QGraphicsOpacityEffect,
     QSizePolicy,
     QHBoxLayout,
@@ -105,6 +106,7 @@ from app.common.signal_bus import signalBus
 from app.utils.hotkey_manager import GlobalHotkeyManager
 from app.utils.logger import logger
 from app.core.core import ServiceCoordinator
+from app.core.plugins import PluginContext, PluginManager, PluginBase
 from app.widget.notice_message import NoticeMessageBox, DelayedCloseNoticeMessageBox
 from app.view.main_window.log_zip_dialog import LogZipDialog, LogZipOptions
 from app.view.main_window.log_zip_dialog import LogZipDialog, LogZipOptions, LogZipPreview
@@ -240,6 +242,136 @@ class CustomSystemThemeListener(SystemThemeListener):
             logger.error("当前环境不支持主题监听，已忽略")
 
 
+class PluginCollectionWidget(QWidget):
+    """插件集合页：展示溢出插件名称标签页。"""
+
+    plugin_selected = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("plugin_collection_widget")
+        self._cards: dict[str, QFrame] = {}
+        self._selected_plugin_id: str | None = None
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(20, 20, 20, 20)
+        self._layout.setSpacing(12)
+
+        self._title = QLabel(self.tr("Plugin Collection"))
+        self._title.setStyleSheet("font-size: 20px;")
+        self._hint = QLabel(self.tr("Click a plugin card below to open it"))
+        self._hint.setWordWrap(True)
+
+        self._list_container = QWidget(self)
+        self._list_layout = QVBoxLayout(self._list_container)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_layout.setSpacing(10)
+
+        self._layout.addWidget(self._title)
+        self._layout.addWidget(self._hint)
+        self._layout.addWidget(self._list_container)
+        self._layout.addStretch(1)
+
+    def set_plugins(self, plugin_items: list[tuple[str, str, str, object]]) -> None:
+        while self._list_layout.count() > 0:
+            item = self._list_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self._cards.clear()
+        self._selected_plugin_id = None
+
+        for plugin_id, plugin_name, plugin_desc, plugin_icon in plugin_items:
+            card = self._build_plugin_card(
+                plugin_id=plugin_id,
+                plugin_name=plugin_name,
+                plugin_desc=plugin_desc,
+                plugin_icon=plugin_icon,
+            )
+            self._cards[plugin_id] = card
+            self._list_layout.addWidget(card)
+
+        self._list_layout.addStretch(1)
+
+        if plugin_items:
+            self._set_selected(plugin_items[0][0])
+
+    def _build_plugin_card(
+        self,
+        *,
+        plugin_id: str,
+        plugin_name: str,
+        plugin_desc: str,
+        plugin_icon: object,
+    ) -> QFrame:
+        card = QFrame(self._list_container)
+        card.setObjectName(f"plugin_collection_card_{plugin_id.replace('.', '_')}")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setMinimumHeight(50)
+        card.setStyleSheet(
+            "QFrame {"
+            " border-radius: 8px;"
+            " border: none;"
+            " background: rgba(255, 255, 255, 0.08);"
+            "}"
+            "QFrame:hover {"
+            " background: rgba(255, 255, 255, 0.12);"
+            "}"
+            "QFrame[selected='true'] {"
+            " background: rgba(255, 255, 255, 0.16);"
+            " border-left: 3px solid #2FD0FF;"
+            "}"
+        )
+
+        row = QHBoxLayout(card)
+        row.setContentsMargins(12, 8, 12, 8)
+        row.setSpacing(10)
+
+        icon_label = QLabel(card)
+        icon_label.setFixedSize(18, 18)
+        qicon = None
+        if isinstance(plugin_icon, QIcon):
+            qicon = plugin_icon
+        elif hasattr(plugin_icon, "icon"):
+            try:
+                qicon = plugin_icon.icon()
+            except Exception:
+                qicon = None
+        if isinstance(qicon, QIcon):
+            icon_label.setPixmap(qicon.pixmap(18, 18))
+
+        name_label = QLabel(plugin_name, card)
+        name_label.setMinimumWidth(160)
+        name_label.setStyleSheet("background: transparent;")
+
+        desc_label = QLabel(plugin_desc or self.tr("No description"), card)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        desc_label.setStyleSheet(
+            "color: rgba(255, 255, 255, 0.70); background: transparent;"
+        )
+
+        row.addWidget(icon_label)
+        row.addWidget(name_label)
+        row.addStretch(1)
+        row.addWidget(desc_label)
+
+        def on_click(_event):
+            self._set_selected(plugin_id)
+            self.plugin_selected.emit(plugin_id)
+
+        card.mousePressEvent = on_click
+        return card
+
+    def _set_selected(self, plugin_id: str) -> None:
+        self._selected_plugin_id = plugin_id
+        for pid, card in self._cards.items():
+            card.setProperty("selected", pid == plugin_id)
+            card.style().unpolish(card)
+            card.style().polish(card)
+            card.update()
+
+
 ENABLE_TEST_INTERFACE_PAGE = cfg.get(cfg.enable_test_interface_page)
 
 
@@ -313,6 +445,14 @@ class MainWindow(MSFluentWindow):
         self._log_zip_infobar: InfoBar | None = None
         self._log_zip_cancel_event: threading.Event | None = None
         self._log_zip_dialog: LogZipDialog | None = None
+        self._plugin_manager: PluginManager | None = None
+        self._plugin_widgets: dict[str, QWidget] = {}
+        self._plugin_names: dict[str, str] = {}
+        self._plugin_icons: dict[str, object] = {}
+        self._plugin_descriptions: dict[str, str] = {}
+        self._plugin_sidebar_preferred_ids: list[str] = []
+        self._plugin_enabled_overrides: dict[str, bool] = {}
+        self._plugin_collection_widget: PluginCollectionWidget | None = None
 
         # 监听“最小化到托盘”开关变化：关闭时立刻清理托盘图标，避免残留
         try:
@@ -407,6 +547,8 @@ class MainWindow(MSFluentWindow):
             logger.info("✓ Announcement 已添加到导航栏")
         else:
             logger.info("多资源适配已开启，Announcement 不会显示在导航栏")
+
+        self._initialize_plugins()
 
         # 添加导航项
         self.splashScreen.finish()
@@ -1080,10 +1222,341 @@ class MainWindow(MSFluentWindow):
         signalBus.multi_resource_adaptation_enabled.connect(
             self._on_multi_resource_adaptation_enabled
         )
+        signalBus.plugin_import_requested.connect(self._on_plugin_import_requested)
+        signalBus.plugin_scan_requested.connect(self._on_plugin_scan_requested)
+        signalBus.plugin_sidebar_limit_changed.connect(
+            self._on_plugin_sidebar_limit_changed
+        )
 
     def _on_multi_resource_adaptation_enabled(self) -> None:
         """响应设置页开启多资源适配的信号，将 BundleInterface 添加到导航栏。"""
         self._add_bundle_interface_to_navigation()
+
+    def _on_plugin_sidebar_limit_changed(self, _value: int) -> None:
+        """响应侧栏插件显示上限变化。"""
+        self._refresh_plugin_navigation_layout()
+
+    def _get_plugin_sidebar_max_visible(self) -> int:
+        """读取并规范化侧栏插件显示上限。"""
+        try:
+            value = int(cfg.get(cfg.plugin_sidebar_max_visible))
+        except Exception:
+            value = 3
+        return max(1, min(10, value))
+
+    def _load_plugin_prefs_from_config(self) -> None:
+        """读取插件排序偏好与启用覆盖配置。"""
+        self._plugin_sidebar_preferred_ids = []
+        self._plugin_enabled_overrides = {}
+        preferred_raw = cfg.get(cfg.plugin_sidebar_preferred)
+        overrides_raw = cfg.get(cfg.plugin_enabled_overrides)
+
+        if isinstance(preferred_raw, str) and preferred_raw.strip():
+            try:
+                preferred_value = json.loads(preferred_raw)
+                if isinstance(preferred_value, list):
+                    self._plugin_sidebar_preferred_ids = [
+                        str(item).strip() for item in preferred_value if str(item).strip()
+                    ]
+            except Exception as exc:
+                logger.warning("解析 plugin_sidebar_preferred 失败: %s", exc)
+
+        if isinstance(overrides_raw, str) and overrides_raw.strip():
+            try:
+                overrides_value = json.loads(overrides_raw)
+                if isinstance(overrides_value, dict):
+                    self._plugin_enabled_overrides = {
+                        str(k): bool(v) for k, v in overrides_value.items()
+                    }
+            except Exception as exc:
+                logger.warning("解析 plugin_enabled_overrides 失败: %s", exc)
+
+    def _save_plugin_prefs_to_config(self) -> None:
+        """保存插件排序偏好与启用覆盖配置。"""
+        cfg.set(
+            cfg.plugin_sidebar_preferred,
+            json.dumps(self._plugin_sidebar_preferred_ids, ensure_ascii=False),
+        )
+        cfg.set(
+            cfg.plugin_enabled_overrides,
+            json.dumps(self._plugin_enabled_overrides, ensure_ascii=False),
+        )
+
+    def _initialize_plugins(self) -> None:
+        """初始化插件管理器并加载插件目录。"""
+        plugin_dir = Path.cwd() / "plugins"
+        ctx = PluginContext(
+            logger=logger,
+            signal_bus=signalBus,
+            service_coordinator=self.service_coordinator,
+        )
+        self._load_plugin_prefs_from_config()
+        self._plugin_manager = PluginManager(plugin_dir=plugin_dir, ctx=ctx)
+        self._load_plugins_to_navigation(show_feedback=False)
+
+    def _resolve_plugin_icon(self, icon_name: str):
+        """将插件元信息中的图标名称转换为 FluentIcon。"""
+        normalized = str(icon_name or "").replace("FIF.", "").strip().upper()
+        if not normalized:
+            normalized = "APPLICATION"
+        return getattr(FIF, normalized, FIF.APPLICATION)
+
+    def _register_plugin_to_navigation(self, plugin_id: str, plugin: PluginBase) -> None:
+        """将单个插件注册到左侧导航。"""
+        if plugin_id in self._plugin_widgets:
+            return
+        meta = plugin.meta
+        title = str(getattr(meta, "name", plugin_id))
+        description = str(getattr(meta, "description", "")).strip()
+        icon_name = str(getattr(meta, "icon", "APPLICATION"))
+        widget = plugin.create_widget(parent=self)
+        if not widget.objectName():
+            safe_plugin_id = (
+                plugin_id.replace(".", "_")
+                .replace(":", "_")
+                .replace("-", "_")
+            )
+            widget.setObjectName(f"plugin_{safe_plugin_id}")
+        icon = self._resolve_plugin_icon(icon_name)
+        self.addSubInterface(widget, icon, title)
+        self._plugin_widgets[plugin_id] = widget
+        self._plugin_names[plugin_id] = title
+        self._plugin_icons[plugin_id] = icon
+        self._plugin_descriptions[plugin_id] = description
+        logger.info("插件已添加到导航栏: %s", plugin_id)
+
+    def _ensure_plugin_collection_widget(self) -> None:
+        """确保插件集合页已创建并接入导航。"""
+        if self._plugin_collection_widget is not None:
+            return
+        self._plugin_collection_widget = PluginCollectionWidget(self)
+        self._plugin_collection_widget.plugin_selected.connect(
+            self._on_plugin_collection_selected
+        )
+        self.addSubInterface(
+            self._plugin_collection_widget,
+            FIF.FOLDER,
+            self.tr("Plugin Collection"),
+        )
+
+    def _rebuild_plugin_navigation_items(
+        self, sidebar_ids: list[str], overflow_ids: list[str]
+    ) -> None:
+        """重建插件相关导航项，确保收纳逻辑稳定生效。"""
+        # 先移除所有插件导航项（只移除导航，不删除页面）
+        for widget in self._plugin_widgets.values():
+            try:
+                self.navigationInterface.removeWidget(widget.objectName())
+            except Exception:
+                pass
+
+        if self._plugin_collection_widget is not None:
+            try:
+                self.navigationInterface.removeWidget(
+                    self._plugin_collection_widget.objectName()
+                )
+            except Exception:
+                pass
+
+        # 重新添加侧栏直显插件
+        for plugin_id in sidebar_ids:
+            widget = self._plugin_widgets.get(plugin_id)
+            if widget is None:
+                continue
+            title = self._plugin_names.get(plugin_id, plugin_id)
+            icon = self._plugin_icons.get(plugin_id, FIF.APPLICATION)
+            self.navigationInterface.addItem(
+                routeKey=widget.objectName(),
+                icon=icon,
+                text=title,
+                onClick=lambda _=False, w=widget: self.switchTo(w),
+                position=NavigationItemPosition.TOP,
+            )
+
+        # 添加插件集合项
+        if overflow_ids:
+            self._ensure_plugin_collection_widget()
+            if self._plugin_collection_widget is not None:
+                overflow_items = [
+                    (
+                        plugin_id,
+                        self._plugin_names.get(plugin_id, plugin_id),
+                        self._plugin_descriptions.get(
+                            plugin_id, self.tr("No description")
+                        ),
+                        self._plugin_icons.get(plugin_id, FIF.APPLICATION),
+                    )
+                    for plugin_id in overflow_ids
+                ]
+                self._plugin_collection_widget.set_plugins(overflow_items)
+                self.navigationInterface.addItem(
+                    routeKey=self._plugin_collection_widget.objectName(),
+                    icon=FIF.FOLDER,
+                    text=self.tr("Plugin Collection"),
+                    onClick=lambda _=False: self.switchTo(self._plugin_collection_widget),
+                    position=NavigationItemPosition.TOP,
+                )
+
+    def _get_enabled_plugin_ids(self) -> list[str]:
+        """获取启用插件列表（按加载顺序）。"""
+        if self._plugin_manager is None:
+            return []
+        ids: list[str] = []
+        for plugin in self._plugin_manager.get_sorted_loaded_plugins():
+            plugin_id = str(getattr(plugin.meta, "plugin_id", "")).strip()
+            if not plugin_id:
+                continue
+            if self._plugin_manager.is_enabled(plugin_id):
+                ids.append(plugin_id)
+        return ids
+
+    def _compute_sidebar_and_overflow_plugins(self) -> tuple[list[str], list[str]]:
+        """根据拖拽顺序和规则计算侧栏显示与集合显示的插件。"""
+        enabled_ids = self._get_enabled_plugin_ids()
+        enabled_set = set(enabled_ids)
+        max_visible = self._get_plugin_sidebar_max_visible()
+
+        preferred_ids = [
+            plugin_id
+            for plugin_id in self._plugin_sidebar_preferred_ids
+            if plugin_id in enabled_set
+        ]
+        remaining_ids = [pid for pid in enabled_ids if pid not in preferred_ids]
+        ordered_ids = preferred_ids + remaining_ids
+
+        sidebar_ids = ordered_ids[:max_visible]
+        overflow_ids = ordered_ids[max_visible:]
+        return sidebar_ids, overflow_ids
+
+    def _refresh_plugin_navigation_layout(self) -> None:
+        """刷新插件导航显示，超过 3 个时自动合并到插件集合。"""
+        sidebar_ids, overflow_ids = self._compute_sidebar_and_overflow_plugins()
+        self._rebuild_plugin_navigation_items(sidebar_ids, overflow_ids)
+
+    def _on_plugin_collection_selected(self, plugin_id: str) -> None:
+        """从插件集合页切换到指定插件页面。"""
+        widget = self._plugin_widgets.get(plugin_id)
+        if widget is not None:
+            self.stackedWidget.setCurrentWidget(widget)
+
+    def get_plugin_customization_snapshot(self) -> list[dict]:
+        """返回插件自定义快照，供设置页编辑。"""
+        if self._plugin_manager is None:
+            return []
+        data: list[dict] = []
+        loaded_plugins = self._plugin_manager.get_sorted_loaded_plugins()
+        loaded_ids = [
+            str(getattr(plugin.meta, "plugin_id", "")).strip()
+            for plugin in loaded_plugins
+            if str(getattr(plugin.meta, "plugin_id", "")).strip()
+        ]
+        preferred_ids = [
+            plugin_id
+            for plugin_id in self._plugin_sidebar_preferred_ids
+            if plugin_id in set(loaded_ids)
+        ]
+        ordered_ids = preferred_ids + [
+            plugin_id for plugin_id in loaded_ids if plugin_id not in preferred_ids
+        ]
+        for plugin_id in ordered_ids:
+            if not plugin_id:
+                continue
+            data.append(
+                {
+                    "plugin_id": plugin_id,
+                    "name": self._plugin_names.get(plugin_id, plugin_id),
+                    "description": self._plugin_descriptions.get(plugin_id, ""),
+                    "enabled": self._plugin_manager.is_enabled(plugin_id),
+                }
+            )
+        return data
+
+    def apply_plugin_customization(self, items: list[dict]) -> None:
+        """应用插件启用状态与拖拽排序配置。"""
+        if self._plugin_manager is None:
+            return
+        preferred_ids: list[str] = []
+        enabled_overrides: dict[str, bool] = {}
+        for item in items:
+            plugin_id = str(item.get("plugin_id", "")).strip()
+            if not plugin_id:
+                continue
+            enabled = bool(item.get("enabled", True))
+            enabled_overrides[plugin_id] = enabled
+            self._plugin_manager.set_enabled(plugin_id, enabled)
+            preferred_ids.append(plugin_id)
+
+        self._plugin_sidebar_preferred_ids = preferred_ids
+        self._plugin_enabled_overrides = enabled_overrides
+        self._save_plugin_prefs_to_config()
+        self._refresh_plugin_navigation_layout()
+
+    def _load_plugins_to_navigation(self, *, show_feedback: bool) -> None:
+        """扫描并加载插件，然后按顺序注入导航。"""
+        if self._plugin_manager is None:
+            return
+        results = self._plugin_manager.load_all()
+
+        for plugin in self._plugin_manager.get_sorted_loaded_plugins():
+            plugin_id = str(getattr(plugin.meta, "plugin_id", "")).strip()
+            if not plugin_id:
+                continue
+            if plugin_id in self._plugin_enabled_overrides:
+                self._plugin_manager.set_enabled(
+                    plugin_id, self._plugin_enabled_overrides[plugin_id]
+                )
+            self._register_plugin_to_navigation(plugin_id, plugin)
+
+        self._refresh_plugin_navigation_layout()
+
+        ok_count = sum(1 for item in results if item.ok)
+        fail_count = len(results) - ok_count
+        added_count = len([item for item in results if item.ok])
+        logger.info(
+            "插件扫描完成，总数=%s，成功=%s，失败=%s，新增导航项=%s",
+            len(results),
+            ok_count,
+            fail_count,
+            added_count,
+        )
+        if show_feedback:
+            if fail_count == 0:
+                signalBus.info_bar_requested.emit(
+                    "success",
+                    self.tr("Plugins loaded: {0}, added to navigation: {1}").format(
+                        ok_count, added_count
+                    ),
+                )
+            else:
+                signalBus.info_bar_requested.emit(
+                    "warning",
+                    self.tr(
+                        "Plugin load completed. Success: {0}, Failed: {1}, Added: {2}"
+                    ).format(ok_count, fail_count, added_count),
+                )
+
+    def _on_plugin_import_requested(self, plugin_file_path: str) -> None:
+        """处理设置页发起的插件导入请求。"""
+        if self._plugin_manager is None:
+            signalBus.info_bar_requested.emit(
+                "error", self.tr("Plugin system is not initialized")
+            )
+            return
+        result = self._plugin_manager.import_plugin_file(plugin_file_path)
+        if result.ok:
+            self._load_plugins_to_navigation(show_feedback=False)
+            signalBus.info_bar_requested.emit(
+                "success", self.tr("Plugin imported and loaded successfully")
+            )
+            return
+        signalBus.info_bar_requested.emit(
+            "error",
+            self.tr("Plugin import failed: {0}").format(result.message),
+        )
+
+    def _on_plugin_scan_requested(self) -> None:
+        """处理设置页发起的插件扫描请求。"""
+        self._load_plugins_to_navigation(show_feedback=True)
 
     def _apply_cli_switch_config(self) -> None:
         """处理 CLI 请求的配置切换，在 UI 初始化前执行。"""

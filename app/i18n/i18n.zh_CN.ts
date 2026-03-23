@@ -1148,6 +1148,26 @@ The following configurations using this bundle will also be deleted:
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Plugins loaded: {0}, added to navigation: {1}</source>
+        <translation>插件已加载：{0}，新增导航项：{1}</translation>
+    </message>
+    <message>
+        <source>Plugin load completed. Success: {0}, Failed: {1}, Added: {2}</source>
+        <translation>插件加载完成。成功：{0}，失败：{1}，新增：{2}</translation>
+    </message>
+    <message>
+        <source>Plugin system is not initialized</source>
+        <translation>插件系统尚未初始化</translation>
+    </message>
+    <message>
+        <source>Plugin imported and loaded successfully</source>
+        <translation>插件导入并加载成功</translation>
+    </message>
+    <message>
+        <source>Plugin import failed: {0}</source>
+        <translation>插件导入失败：{0}</translation>
+    </message>
+    <message>
         <location filename="../view/main_window/main_window.py" line="331"/>
         <source>Task</source>
         <translation>任务</translation>
@@ -1182,6 +1202,18 @@ The following configurations using this bundle will also be deleted:
         <location filename="../view/main_window/main_window.py" line="399"/>
         <source>Setting</source>
         <translation>设置</translation>
+    </message>
+    <message>
+        <source>Click a plugin card below to open it</source>
+        <translation>点击下方插件卡片打开对应插件</translation>
+    </message>
+    <message>
+        <source>No description</source>
+        <translation>暂无描述</translation>
+    </message>
+    <message>
+        <source>Plugin Collection</source>
+        <translation>插件集合</translation>
     </message>
     <message>
         <location filename="../view/main_window/main_window.py" line="511"/>
@@ -2473,9 +2505,85 @@ The following configurations using this bundle will also be deleted:
 <context>
     <name>SettingInterface</name>
     <message>
+        <source>Import</source>
+        <translation>导入</translation>
+    </message>
+    <message>
+        <source>Scan</source>
+        <translation>扫描</translation>
+    </message>
+    <message>
+        <source>Customize</source>
+        <translation>自定义</translation>
+    </message>
+    <message>
+        <source>Import plugin</source>
+        <translation>导入插件</translation>
+    </message>
+    <message>
+        <source>Import Python plugin file (*.py). Plugin entries will be shown in the left navigation bar.</source>
+        <translation>导入 Python 插件文件（*.py）。插件入口将显示在左侧导航栏。</translation>
+    </message>
+    <message>
+        <source>Scan plugins</source>
+        <translation>扫描插件</translation>
+    </message>
+    <message>
+        <source>Scan plugin directory and load available plugins</source>
+        <translation>扫描插件目录并加载可用插件</translation>
+    </message>
+    <message>
+        <source>Customize plugin visibility and sidebar priority. Extra plugins are grouped into Plugin Collection.</source>
+        <translation>自定义插件显示与侧栏优先级。超出的插件会归入插件集合。</translation>
+    </message>
+    <message>
+        <source>Max sidebar plugins</source>
+        <translation>侧栏最大插件数</translation>
+    </message>
+    <message>
+        <source>Set how many plugins are displayed directly in the sidebar</source>
+        <translation>设置侧栏直接显示的插件数量</translation>
+    </message>
+    <message>
+        <source>Select plugin file</source>
+        <translation>选择插件文件</translation>
+    </message>
+    <message>
+        <source>Python Files (*.py)</source>
+        <translation>Python 文件（*.py）</translation>
+    </message>
+    <message>
+        <source>Plugin customization is currently unavailable</source>
+        <translation>当前无法进行插件自定义</translation>
+    </message>
+    <message>
+        <source>No plugins loaded</source>
+        <translation>暂无已加载插件</translation>
+    </message>
+    <message>
+        <source>Plugin sidebar customization applied</source>
+        <translation>插件侧栏自定义已应用</translation>
+    </message>
+    <message>
         <location filename="../view/setting_interface/setting_interface.py" line="413"/>
         <source>ChainFlow Assistant</source>
         <translation>链程助手</translation>
+    </message>
+    <message>
+        <source>Custom sidebar plugin display</source>
+        <translation>自定义侧栏插件显示</translation>
+    </message>
+    <message>
+        <source>Configure plugin enabled status and sidebar priority. Plugins beyond sidebar limit will be grouped into Plugin Collection.</source>
+        <translation>可设置插件启用状态与侧栏优先显示。超出侧栏显示上限的插件会自动归入“插件集合”。</translation>
+    </message>
+    <message>
+        <source>Enable</source>
+        <translation>启用</translation>
+    </message>
+    <message>
+        <source>Sidebar priority</source>
+        <translation>侧栏优先</translation>
     </message>
     <message>
         <location filename="../view/setting_interface/setting_interface.py" line="472"/>
@@ -4101,6 +4209,58 @@ Below is the detailed stack trace. You can copy it and report to the developer:<
         <location filename="../view/task_interface/components/ListItem.py" line="1062"/>
         <source>Are you sure you want to delete task &apos;{}&apos;?</source>
         <translation>您确定要删除任务“{}”吗？</translation>
+    </message>
+</context>
+<context>
+    <name>PluginCollectionWidget</name>
+    <message>
+        <source>Plugin Collection</source>
+        <translation>插件集合</translation>
+    </message>
+    <message>
+        <source>Click a plugin card below to open it</source>
+        <translation>点击下方插件卡片打开对应插件</translation>
+    </message>
+    <message>
+        <source>No description</source>
+        <translation>暂无描述</translation>
+    </message>
+</context>
+<context>
+    <name>PluginSidebarCustomizationDialog</name>
+    <message>
+        <source>Custom sidebar plugin display</source>
+        <translation>自定义侧栏插件显示</translation>
+    </message>
+    <message>
+        <source>Configure plugin enabled status and sidebar priority. Plugins beyond sidebar limit will be grouped into Plugin Collection.</source>
+        <translation>可设置插件启用状态与侧栏优先显示。超出侧栏显示上限的插件会自动归入“插件集合”。</translation>
+    </message>
+    <message>
+        <source>Enable</source>
+        <translation>启用</translation>
+    </message>
+    <message>
+        <source>Sidebar priority</source>
+        <translation>侧栏优先</translation>
+    </message>
+</context>
+<context>
+    <name>PluginSidebarCustomizationDialog</name>
+    <message>
+        <source>Configure plugin enabled status and drag to reorder plugin display priority. Plugins beyond sidebar limit will be grouped into Plugin Collection.</source>
+        <translation>可设置插件启用状态，并通过拖拽调整显示顺序。超出侧栏显示上限的插件会自动归入“插件集合”。</translation>
+    </message>
+    <message>
+        <source>Drag to reorder</source>
+        <translation>拖动调整顺序</translation>
+    </message>
+</context>
+<context>
+    <name>SettingInterface</name>
+    <message>
+        <source>Customize plugin visibility and drag order. Extra plugins are grouped into Plugin Collection.</source>
+        <translation>自定义插件显示与拖拽顺序。超出的插件会归入插件集合。</translation>
     </message>
 </context>
 <context>

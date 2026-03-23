@@ -158,6 +158,10 @@ class OptionService:
         if isinstance(option_type, str):
             option_type = option_type.lower()
 
+        # shows 字段：仅用于前端展示文件内容，不参与 pipeline_override
+        if not option_type and "shows" in option_def:
+            option_type = "show"
+
         # 向后兼容：缺失 type 的选项默认视为 combobox
         if not option_type:
             option_type = "combobox"
@@ -183,8 +187,24 @@ class OptionService:
 
         # 处理不同类型的选项
 
+        if option_type == "show":
+            field_config["type"] = "show"
+            shows = option_def.get("shows")
+            if isinstance(shows, list):
+                field_config["shows"] = shows
+            else:
+                field_config["shows"] = []
+            # 非持久化字段：仅展示用途，不写入 task_option
+            field_config["non_persistent"] = True
+            if "mode" in option_def:
+                field_config["mode"] = option_def.get("mode")
+            if "title" in option_def:
+                field_config["title"] = option_def.get("title")
+            if "when" in option_def:
+                field_config["when"] = option_def.get("when")
+
         # 处理 switch 类型
-        if option_type == "switch":
+        elif option_type == "switch":
             field_config["type"] = "switch"
             # switch 类型固定为 YES 和 NO 两个选项
             options = [{"name": "Yes", "label": "是"}, {"name": "No", "label": "否"}]

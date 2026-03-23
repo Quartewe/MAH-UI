@@ -8,6 +8,7 @@ from .switch import SwitchOptionItem
 from .input import InputOptionItem
 from .inputs import InputsOptionItem
 from .checkbox import CheckBoxOptionItem
+from .show import ShowOptionItem
 from .registry import OptionItemRegistry
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "InputOptionItem",
     "InputsOptionItem",
     "CheckBoxOptionItem",
+    "ShowOptionItem",
     "OptionItemRegistry",
 ]

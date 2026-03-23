@@ -2,6 +2,50 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="ja_JP">
 <context>
+    <name>PluginCollectionWidget</name>
+    <message>
+        <source>Plugin Collection</source>
+        <translation>プラグインコレクション</translation>
+    </message>
+    <message>
+        <source>Click a plugin card below to open it</source>
+        <translation>下のプラグインカードをクリックして開きます</translation>
+    </message>
+    <message>
+        <source>No description</source>
+        <translation>説明なし</translation>
+    </message>
+</context>
+
+<context>
+    <name>PluginSidebarCustomizationDialog</name>
+    <message>
+        <source>Custom sidebar plugin display</source>
+        <translation>サイドバープラグイン表示のカスタマイズ</translation>
+    </message>
+    <message>
+        <source>Configure plugin enabled status and sidebar priority. Plugins beyond sidebar limit will be grouped into Plugin Collection.</source>
+        <translation>プラグインの有効状態とサイドバー優先表示を設定します。サイドバー上限を超えたプラグインは「プラグインコレクション」にまとめられます。</translation>
+    </message>
+    <message>
+        <source>Enable</source>
+        <translation>有効</translation>
+    </message>
+    <message>
+        <source>Sidebar priority</source>
+        <translation>サイドバー優先</translation>
+    </message>
+    <message>
+        <source>Configure plugin enabled status and drag to reorder plugin display priority. Plugins beyond sidebar limit will be grouped into Plugin Collection.</source>
+        <translation>プラグインの有効状態を設定し、ドラッグで表示順を変更します。サイドバー上限を超えたプラグインは「プラグインコレクション」にまとめられます。</translation>
+    </message>
+    <message>
+        <source>Drag to reorder</source>
+        <translation>ドラッグして並び替え</translation>
+    </message>
+</context>
+
+<context>
     <name>MainWindow</name>
     <message>
         <source>Task</source>
@@ -24,6 +68,18 @@
         <translation>設定</translation>
     </message>
     <message>
+        <source>Click a plugin card below to open it</source>
+        <translation>下のプラグインカードをクリックして開きます</translation>
+    </message>
+    <message>
+        <source>No description</source>
+        <translation>説明なし</translation>
+    </message>
+    <message>
+        <source>Plugin Collection</source>
+        <translation>プラグインコレクション</translation>
+    </message>
+    <message>
         <source>Show</source>
         <translation>表示</translation>
     </message>
@@ -34,6 +90,26 @@
     <message>
         <source>Quit</source>
         <translation>終了</translation>
+    </message>
+    <message>
+        <source>Plugins loaded: {0}, added to navigation: {1}</source>
+        <translation>プラグイン読込：{0}件、ナビ追加：{1}件</translation>
+    </message>
+    <message>
+        <source>Plugin load completed. Success: {0}, Failed: {1}, Added: {2}</source>
+        <translation>プラグイン読込完了。成功：{0}、失敗：{1}、追加：{2}</translation>
+    </message>
+    <message>
+        <source>Plugin system is not initialized</source>
+        <translation>プラグインシステムが初期化されていません</translation>
+    </message>
+    <message>
+        <source>Plugin imported and loaded successfully</source>
+        <translation>プラグインのインポートと読込に成功しました</translation>
+    </message>
+    <message>
+        <source>Plugin import failed: {0}</source>
+        <translation>プラグインのインポートに失敗しました：{0}</translation>
     </message>
 </context>
 <context>
@@ -182,6 +258,86 @@
 </context>
 <context>
     <name>SettingInterface</name>
+    <message>
+        <source>Custom sidebar plugin display</source>
+        <translation>サイドバープラグイン表示のカスタマイズ</translation>
+    </message>
+    <message>
+        <source>Configure plugin enabled status and sidebar priority. Plugins beyond sidebar limit will be grouped into Plugin Collection.</source>
+        <translation>プラグインの有効状態とサイドバー優先表示を設定します。サイドバー上限を超えたプラグインは「プラグインコレクション」にまとめられます。</translation>
+    </message>
+    <message>
+        <source>Enable</source>
+        <translation>有効</translation>
+    </message>
+    <message>
+        <source>Sidebar priority</source>
+        <translation>サイドバー優先</translation>
+    </message>
+    <message>
+        <source>Import</source>
+        <translation>インポート</translation>
+    </message>
+    <message>
+        <source>Scan</source>
+        <translation>スキャン</translation>
+    </message>
+    <message>
+        <source>Customize</source>
+        <translation>カスタマイズ</translation>
+    </message>
+    <message>
+        <source>Import plugin</source>
+        <translation>プラグインをインポート</translation>
+    </message>
+    <message>
+        <source>Import Python plugin file (*.py). Plugin entries will be shown in the left navigation bar.</source>
+        <translation>Python プラグインファイル（*.py）をインポートします。プラグイン項目は左ナビゲーションバーに表示されます。</translation>
+    </message>
+    <message>
+        <source>Scan plugins</source>
+        <translation>プラグインをスキャン</translation>
+    </message>
+    <message>
+        <source>Scan plugin directory and load available plugins</source>
+        <translation>プラグインディレクトリをスキャンして利用可能なプラグインを読み込みます</translation>
+    </message>
+    <message>
+        <source>Customize plugin visibility and sidebar priority. Extra plugins are grouped into Plugin Collection.</source>
+        <translation>プラグインの表示とサイドバー優先度をカスタマイズします。超過したプラグインはプラグインコレクションにまとめられます。</translation>
+    </message>
+    <message>
+        <source>Customize plugin visibility and drag order. Extra plugins are grouped into Plugin Collection.</source>
+        <translation>プラグインの表示とドラッグ順序をカスタマイズします。超過したプラグインはプラグインコレクションにまとめられます。</translation>
+    </message>
+    <message>
+        <source>Max sidebar plugins</source>
+        <translation>サイドバー最大プラグイン数</translation>
+    </message>
+    <message>
+        <source>Set how many plugins are displayed directly in the sidebar</source>
+        <translation>サイドバーに直接表示するプラグイン数を設定します</translation>
+    </message>
+    <message>
+        <source>Select plugin file</source>
+        <translation>プラグインファイルを選択</translation>
+    </message>
+    <message>
+        <source>Python Files (*.py)</source>
+        <translation>Python ファイル（*.py）</translation>
+    </message>
+    <message>
+        <source>Plugin customization is currently unavailable</source>
+        <translation>現在、プラグインのカスタマイズは利用できません</translation>
+    </message>
+    <message>
+        <source>No plugins loaded</source>
+        <translation>読み込まれたプラグインがありません</translation>
+    </message>
+    <message>
+        <source>Plugin sidebar customization applied</source>
+        <translation>プラグインのサイドバーカスタマイズを適用しました</translation>
+    </message>
     <message>
         <source>Personalization</source>
         <translation>パーソナライズ</translation>

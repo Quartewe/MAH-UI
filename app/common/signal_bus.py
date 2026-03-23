@@ -78,6 +78,11 @@ class SignalBus(QObject):
     # 多资源适配启用后通知主界面等组件初始化相关 UI
     multi_resource_adaptation_enabled = Signal()
 
+    # 插件系统信号
+    plugin_import_requested = Signal(str)  # 导入插件文件路径
+    plugin_scan_requested = Signal()  # 扫描并加载插件目录
+    plugin_sidebar_limit_changed = Signal(int)  # 侧栏显示插件数量上限变化
+
     # 更新相关信号
     check_auto_run_after_update_cancel = Signal()  # 更新取消后检查是否需要自动运行
     all_updates_completed = Signal()  # 所有更新（设置更新 + bundle更新）完成
