@@ -860,6 +860,7 @@ class BundleInterface(UI_BundleInterface, QWidget):
                     info_bar_signal=signalBus.info_bar_requested,
                     interface=interface_data,
                     check_only=True,
+                    update_target="resource",
                 )
 
                 # 连接检查结果信号
@@ -904,6 +905,7 @@ class BundleInterface(UI_BundleInterface, QWidget):
                 info_bar_signal=signalBus.info_bar_requested,
                 interface=interface_data,
                 check_only=True,
+                update_target="resource",
             )
 
             # 连接检查结果信号
@@ -1143,6 +1145,7 @@ class BundleInterface(UI_BundleInterface, QWidget):
             info_bar_signal=signalBus.info_bar_requested,
             interface=interface_data,
             force_full_download=False,
+            update_target="resource",
         )
 
         # 连接更新完成信号

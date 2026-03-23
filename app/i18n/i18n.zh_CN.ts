@@ -2638,6 +2638,18 @@ Please check for updates first, or visit the GitHub releases page.</source>
         <translation>立即更新</translation>
     </message>
     <message>
+        <source>Software Update</source>
+        <translation>软件更新</translation>
+    </message>
+    <message>
+        <source>Resource Update</source>
+        <translation>资源更新</translation>
+    </message>
+    <message>
+        <source>Software Update Now</source>
+        <translation>立即更新软件</translation>
+    </message>
+    <message>
         <location filename="../view/setting_interface/setting_interface.py" line="786"/>
         <source>Custom Startup</source>
         <translation>自定义启动</translation>
@@ -3294,6 +3306,14 @@ Please check for updates first, or visit the GitHub releases page.</source>
         <translation>最新版本</translation>
     </message>
     <message>
+        <source>Resource version: </source>
+        <translation>资源版本</translation>
+    </message>
+    <message>
+        <source>Latest resource version: </source>
+        <translation>最新资源版本</translation>
+    </message>
+    <message>
         <location filename="../view/setting_interface/setting_interface.py" line="1571"/>
         <source>UI version: </source>
         <translation>UI 版本</translation>
@@ -3389,9 +3409,17 @@ Please check for updates first, or visit the GitHub releases page.</source>
         <translation>服务未准备完成,无法重置资源</translation>
     </message>
     <message>
+        <source>Service is not ready, cannot update resource</source>
+        <translation>服务未准备完成,无法更新资源</translation>
+    </message>
+    <message>
         <location filename="../view/setting_interface/setting_interface.py" line="2732"/>
         <source>Starting Reset Resource</source>
         <translation>重置资源中</translation>
+    </message>
+    <message>
+        <source>Starting Resource Update</source>
+        <translation>资源更新中</translation>
     </message>
     <message>
         <location filename="../view/setting_interface/setting_interface.py" line="2828"/>

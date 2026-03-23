@@ -890,6 +890,7 @@ class Update(BaseUpdate):
         force_full_download: bool = False,
         *,
         check_only: bool = False,
+        update_target: str = "resource",
     ):
         """
         更新器核心对象。
@@ -906,6 +907,7 @@ class Update(BaseUpdate):
             interface: 接口配置字典，包含项目信息（name, version, github/url, mirrorchyan_rid 等）
             force_full_download: 是否强制完整下载
             check_only: 是否仅检查更新
+            update_target: 更新目标，"software" 或 "resource"
         """
         super().__init__()
         self.service_coordinator = service_coordinator
@@ -914,6 +916,7 @@ class Update(BaseUpdate):
         self.info_bar_signal = info_bar_signal
         self.force_full_download = force_full_download
         self.check_only = check_only
+        self.update_target = "software" if update_target == "software" else "resource"
 
         # 从 interface 中获取参数
         self.interface = interface or {}
@@ -921,8 +924,18 @@ class Update(BaseUpdate):
         self.current_version = self.interface.get("version", "v1.0.0")
         if not self.current_version.startswith("v"):
             self.current_version = "v" + self.current_version
-        self.url = self.interface.get("github", self.interface.get("url", ""))
-        self.current_res_id = self.interface.get("mirrorchyan_rid", "")
+        self.software_url = self.interface.get(
+            "software_github",
+            self.interface.get("github", self.interface.get("url", "")),
+        )
+        self.resource_url = self.interface.get(
+            "resource_github",
+            self.interface.get("github", self.interface.get("url", "")),
+        )
+        self.url = self.software_url if self.update_target == "software" else self.resource_url
+        self.current_res_id = (
+            "" if self.update_target == "software" else self.interface.get("mirrorchyan_rid", "")
+        )
 
         # 从配置中获取 mirror_cdk
         self.mirror_cdk = self.Mirror_ckd()
@@ -944,6 +957,14 @@ class Update(BaseUpdate):
         self.version_name: str | None = None
         # 防止重复运行的标记
         self._is_running: bool = False
+
+    def _latest_version_config_item(self):
+        if self.update_target == "resource":
+            return cfg.latest_resource_update_version
+        return cfg.latest_update_version
+
+    def _save_latest_update_version(self, version: str) -> None:
+        cfg.set(self._latest_version_config_item(), version)
 
     def _normalize_channel(self, value) -> Config.UpdateChannel:
         """Convert stored channel value into a valid UpdateChannel enum."""
@@ -989,7 +1010,7 @@ class Update(BaseUpdate):
         """
         # 重置运行时状态
         self.latest_update_version = (
-            cfg.get(cfg.latest_update_version) or self.current_version
+            cfg.get(self._latest_version_config_item()) or self.current_version
         )
         self.download_url = None
         self.release_note = ""
@@ -1247,7 +1268,7 @@ class Update(BaseUpdate):
             # 步骤2: 检查是否支持热更新
             if self.force_full_download:
                 logger.info("[步骤2] 强制下载模式，跳过 update_flag/hotfix 检查")
-            elif download_source == "github":
+            elif download_source == "github" and self.update_target == "software":
                 logger.info("[步骤2] 开始判断Github热更新支持...")
                 update_flag_url = self._form_github_url(
                     self.url, "update_flag", str(self.latest_update_version)
@@ -1535,7 +1556,7 @@ class Update(BaseUpdate):
                 else:
                     logger.info("  [检查更新] Mirror: 当前已是最新版本")
                     self.latest_update_version = self.current_version
-                    cfg.set(cfg.latest_update_version, self.latest_update_version)
+                    self._save_latest_update_version(self.latest_update_version)
                     return False
             elif mirror_status == "failed_info":
                 logger.info(
@@ -1547,7 +1568,7 @@ class Update(BaseUpdate):
             if mirror_version:
                 self.version_name = mirror_version
                 self.latest_update_version = mirror_version
-                cfg.set(cfg.latest_update_version, self.latest_update_version)
+                self._save_latest_update_version(self.latest_update_version)
                 if not fetch_download_url:
                     # 只需要版本信息就提前返回
                     self._emit_info_bar(
@@ -1644,7 +1665,7 @@ class Update(BaseUpdate):
             if status == "no_need" and not self.force_full_download:
                 logger.info("  [检查更新] GitHub: 当前已是最新版本")
                 self.latest_update_version = self.current_version
-                cfg.set(cfg.latest_update_version, self.latest_update_version)
+                self._save_latest_update_version(self.latest_update_version)
                 return False
 
         tag_name = github_result.get("tag_name") or github_result.get("name")
@@ -1656,7 +1677,7 @@ class Update(BaseUpdate):
 
         if not fetch_download_url:
             self.latest_update_version = str(target_version)
-            cfg.set(cfg.latest_update_version, self.latest_update_version)
+            self._save_latest_update_version(self.latest_update_version)
             self._emit_info_bar(
                 "info", self.tr("Found update: ") + str(self.latest_update_version)
             )
@@ -1668,9 +1689,17 @@ class Update(BaseUpdate):
                 result_data["release_note"] = self.release_note
             return result_data
 
-        download_asset = self._select_github_asset_by_keywords(
-            github_result.get("assets", []) or [], target_version
-        )
+        update_type = "full"
+        if self.update_target == "resource":
+            download_asset, update_type = self._select_resource_github_asset(
+                github_result.get("assets", []) or [],
+                target_version,
+                prefer_incremental=not self.force_full_download,
+            )
+        else:
+            download_asset = self._select_github_asset_by_keywords(
+                github_result.get("assets", []) or [], target_version
+            )
         if not download_asset:
             logger.warning("  [检查更新] GitHub: 未找到下载地址")
             return False
@@ -1687,7 +1716,7 @@ class Update(BaseUpdate):
         )
         self.download_url = download_url
         self.latest_update_version = str(target_version)
-        cfg.set(cfg.latest_update_version, self.latest_update_version)
+        self._save_latest_update_version(self.latest_update_version)
         self._emit_info_bar(
             "info", self.tr("Found update: ") + str(self.latest_update_version)
         )
@@ -1695,6 +1724,7 @@ class Update(BaseUpdate):
             "url": download_url,
             "source": "github",
             "version": self.latest_update_version,
+            "update_type": update_type,
         }
         if self.release_note:
             result_data["release_note"] = self.release_note
@@ -1754,6 +1784,69 @@ class Update(BaseUpdate):
                 best_score = int(score)
 
         return best_asset
+
+    def _select_resource_github_asset(
+        self,
+        assets: Any,
+        target_version: str,
+        *,
+        prefer_incremental: bool,
+    ) -> tuple[dict | None, str]:
+        """为资源更新选择 GitHub 资产（高层增量：hotfix 优先，全量兜底）。"""
+        normalized_assets = assets if isinstance(assets, list) else []
+        version = str(target_version or "").lower()
+        stripped_version = version.lstrip("v")
+        incremental_keywords = ("hotfix", "incremental", "patch")
+
+        def _is_archive(name: str) -> bool:
+            lowered = name.lower()
+            return lowered.endswith(".zip") or lowered.endswith(".tar.gz")
+
+        def _version_score(name: str) -> int:
+            lowered = name.lower()
+            score = 0
+            if version and version in lowered:
+                score += 2
+            if stripped_version and stripped_version in lowered:
+                score += 1
+            return score
+
+        incremental_candidates: list[dict] = []
+        full_candidates: list[dict] = []
+
+        for asset in normalized_assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_name = asset.get("name")
+            if not isinstance(asset_name, str) or not _is_archive(asset_name):
+                continue
+            lowered = asset_name.lower()
+            if any(keyword in lowered for keyword in incremental_keywords):
+                incremental_candidates.append(asset)
+            else:
+                full_candidates.append(asset)
+
+        def _pick_best(candidates: list[dict]) -> dict | None:
+            if not candidates:
+                return None
+            return sorted(
+                candidates,
+                key=lambda item: (
+                    -_version_score(str(item.get("name", ""))),
+                    len(str(item.get("name", ""))),
+                ),
+            )[0]
+
+        incremental_best = _pick_best(incremental_candidates)
+        full_best = _pick_best(full_candidates)
+
+        if prefer_incremental and incremental_best:
+            return incremental_best, "incremental"
+        if full_best:
+            return full_best, "full"
+        if incremental_best:
+            return incremental_best, "incremental"
+        return None, "full"
 
     def check_ui_update(self, fetch_download_url: bool = True) -> dict | bool:
         """
@@ -1817,7 +1910,7 @@ class Update(BaseUpdate):
             if mirror_status == "no_need":
                 logger.info("  [检查更新] Mirror: 当前已是最新版本")
                 self.latest_update_version = self.current_version
-                cfg.set(cfg.latest_update_version, self.latest_update_version)
+                self._save_latest_update_version(self.latest_update_version)
                 return False
             elif mirror_status == "failed_info":
                 logger.info(
@@ -1829,7 +1922,7 @@ class Update(BaseUpdate):
             if mirror_version:
                 self.version_name = mirror_version
                 self.latest_update_version = mirror_version
-                cfg.set(cfg.latest_update_version, self.latest_update_version)
+                self._save_latest_update_version(self.latest_update_version)
                 if not fetch_download_url:
                     # 只需要版本信息就提前返回
                     self._emit_info_bar(
@@ -1917,7 +2010,7 @@ class Update(BaseUpdate):
             if status == "no_need" and not self.force_full_download:
                 logger.info("  [检查更新] GitHub: 当前已是最新版本")
                 self.latest_update_version = self.current_version
-                cfg.set(cfg.latest_update_version, self.latest_update_version)
+                self._save_latest_update_version(self.latest_update_version)
                 return False
 
         tag_name = github_result.get("tag_name") or github_result.get("name")
@@ -1929,7 +2022,7 @@ class Update(BaseUpdate):
 
         if not fetch_download_url:
             self.latest_update_version = str(target_version)
-            cfg.set(cfg.latest_update_version, self.latest_update_version)
+            self._save_latest_update_version(self.latest_update_version)
             self._emit_info_bar(
                 "info", self.tr("Found update: ") + str(self.latest_update_version)
             )
@@ -1962,7 +2055,7 @@ class Update(BaseUpdate):
         )
         self.download_url = download_url
         self.latest_update_version = str(target_version)
-        cfg.set(cfg.latest_update_version, self.latest_update_version)
+        self._save_latest_update_version(self.latest_update_version)
         self._emit_info_bar(
             "info", self.tr("Found update: ") + str(self.latest_update_version)
         )

@@ -297,6 +297,9 @@ class Config(QConfig):
 
     # ===== 软件更新 =====
     latest_update_version = ConfigItem("Update", "LatestUpdateVersion", "")
+    latest_resource_update_version = ConfigItem(
+        "Update", "LatestResourceUpdateVersion", ""
+    )
     cdk_expired_time = ConfigItem("Update", "CdkExpiredTime", -1)
 
     # dev

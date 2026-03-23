@@ -388,6 +388,7 @@ class SettingInterface(QWidget):
         self._updater: Optional[Update] = None
         # 使用 Update 本身作为“仅检查更新”的线程对象（check_only=True）
         self._update_checker: Optional[Update] = None
+        self._resource_update_checker: Optional[Update] = None
         self._latest_update_check_result: str | bool | None = None
         self._updater_started = False
         self._local_update_package: Path | None = None
@@ -426,6 +427,7 @@ class SettingInterface(QWidget):
                 logger.info("自动更新未开启，通知 main_window 检查是否需要自动运行")
                 signalBus.check_auto_run_after_update_cancel.emit()
         self._init_update_checker()
+        self._init_resource_update_checker()
 
     def connect_notice_card_clicked(self):
         # 连接通知卡片的点击事件
@@ -602,7 +604,12 @@ class SettingInterface(QWidget):
         self.github_button = self._create_detail_button(
             self.tr("GitHub URL"), FIF.GITHUB
         )
-        self.update_button = self._create_detail_button(self.tr("Update"), FIF.UPDATE)
+        self.update_button = self._create_detail_button(
+            self.tr("Software Update"), FIF.UPDATE
+        )
+        self.resource_update_button = self._create_detail_button(
+            self.tr("Resource Update"), FIF.DOWNLOAD
+        )
         self.update_log_button = self._create_detail_button(
             self.tr("Open update log"), FIF.QUICK_NOTE
         )
@@ -653,12 +660,14 @@ class SettingInterface(QWidget):
 
         self.license_button.clicked.connect(self._open_license_dialog)
         self.github_button.clicked.connect(self._open_github_home)
+        self.resource_update_button.clicked.connect(self._on_resource_update_clicked)
         self.update_log_button.clicked.connect(self._open_update_log)
         self._bind_start_button(enable=True)
 
         detail_row.addWidget(self.license_button)
         detail_row.addWidget(self.github_button)
         detail_row.addWidget(self.update_button)
+        detail_row.addWidget(self.resource_update_button)
         detail_row.addWidget(self.update_log_button)
         detail_row.addWidget(self.progress_container, 1)
         header_layout.addLayout(detail_row)
@@ -785,9 +794,10 @@ class SettingInterface(QWidget):
 
     def _lock_update_button_temporarily(self) -> None:
         self.update_button.setEnabled(False)
+        self.resource_update_button.setEnabled(False)
         QTimer.singleShot(
             500,
-            lambda: self.update_button.setEnabled(True),
+            lambda: (self.update_button.setEnabled(True), self.resource_update_button.setEnabled(True)),
         )
 
     def _disconnect_update_button(self) -> None:
@@ -802,7 +812,7 @@ class SettingInterface(QWidget):
     def _bind_start_button(self, *, enable: bool = True) -> None:
         self._disconnect_update_button()
         self.update_button.clicked.connect(self._on_update_start_clicked)
-        self.update_button.setText(self.tr("Update"))
+        self.update_button.setText(self.tr("Software Update"))
         self.update_button.setEnabled(enable)
         self._update_button_handler = self._on_update_start_clicked
 
@@ -816,7 +826,7 @@ class SettingInterface(QWidget):
     def _bind_instant_update_button(self, *, enable: bool = True) -> None:
         self._disconnect_update_button()
         self.update_button.clicked.connect(self._on_instant_update_clicked)
-        self.update_button.setText(self.tr("Update Now"))
+        self.update_button.setText(self.tr("Software Update Now"))
         self.update_button.setEnabled(enable)
         self._update_button_handler = self._on_instant_update_clicked
 
@@ -1775,7 +1785,11 @@ class SettingInterface(QWidget):
         # 保存项目名称，用于更新日志等功能
         self.name = name if name else "MFW_CFA"
         current_version = metadata.get("version", "0.0.1")
+        resource_version = metadata.get("resource_version", current_version)
         last_version = cfg.get(cfg.latest_update_version) or current_version
+        latest_resource_version = (
+            cfg.get(cfg.latest_resource_update_version) or resource_version
+        )
         license_value = metadata.get("license", "None License")
         github = metadata.get("github", metadata.get("url", ""))
         description = metadata.get("description", "")
@@ -1789,6 +1803,12 @@ class SettingInterface(QWidget):
         self.version_label.setText(
             self.tr("Current version: ")
             + str(current_version)
+            + "    "
+            + self.tr("Resource version: ")
+            + str(resource_version)
+            + "    "
+            + self.tr("Latest resource version: ")
+            + str(latest_resource_version)
             + "    "
             + self.tr("Latest version: ")
             + str(last_version)
@@ -2584,6 +2604,7 @@ class SettingInterface(QWidget):
             progress_signal=signalBus.update_progress,
             info_bar_signal=signalBus.info_bar_requested,
             interface=interface,
+            update_target="software",
         )
 
         # 绑定信号
@@ -2611,11 +2632,36 @@ class SettingInterface(QWidget):
             interface=interface,
             force_full_download=False,
             check_only=True,
+            update_target="software",
         )
         # 仅检查模式下，Update 不会发出 InfoBar / 进度相关信号，只通过 check_result_ready 返回结果
         self._update_checker.check_result_ready.connect(self._on_update_check_result)
         self._update_checker.finished.connect(self._update_checker.deleteLater)
         self._update_checker.start()
+
+    def _init_resource_update_checker(self):
+        """在后台检查资源最新版本，并回传结果用于头部展示。"""
+        if not self._service_coordinator:
+            logger.warning("service_coordinator 未初始化，跳过资源更新检查器")
+            return
+        interface = self._service_coordinator.task.interface or {}
+        self._resource_update_checker = Update(
+            service_coordinator=self._service_coordinator,
+            stop_signal=signalBus.update_stopped,
+            progress_signal=signalBus.update_progress,
+            info_bar_signal=signalBus.info_bar_requested,
+            interface=interface,
+            force_full_download=False,
+            check_only=True,
+            update_target="resource",
+        )
+        self._resource_update_checker.check_result_ready.connect(
+            self._on_resource_update_check_result
+        )
+        self._resource_update_checker.finished.connect(
+            self._resource_update_checker.deleteLater
+        )
+        self._resource_update_checker.start()
 
     def _should_skip_update_checker(self) -> tuple[bool, str]:
         """根据自动更新和本地包状态决定是否跳过检查线程。"""
@@ -2856,6 +2902,14 @@ class SettingInterface(QWidget):
         if release_note and latest_version:
             self._save_release_note(str(latest_version), release_note)
 
+    def _on_resource_update_check_result(self, result: dict):
+        """接收资源更新检查结果并刷新头部资源版本显示。"""
+        latest_resource_version = result.get("latest_update_version") or cfg.get(
+            cfg.latest_resource_update_version
+        )
+        if latest_resource_version:
+            self._refresh_update_header()
+
     def _save_release_note(self, version: str, content: str):
         """保存更新日志到文件"""
         import os
@@ -2970,6 +3024,39 @@ class SettingInterface(QWidget):
             info_bar_signal=signalBus.info_bar_requested,
             interface=interface,
             force_full_download=True,
+            update_target="resource",
+        )
+        self._updater.start()
+
+    def _on_resource_update_clicked(self):
+        """更新资源：按版本检查并下载资源包。"""
+        if self._updater and self._updater.isRunning():
+            signalBus.info_bar_requested.emit(
+                "warning", self.tr("Update is already running")
+            )
+            return
+
+        if not self._service_coordinator:
+            signalBus.info_bar_requested.emit(
+                "error", self.tr("Service is not ready, cannot update resource")
+            )
+            return
+
+        self._show_progress_bar()
+        self._bind_stop_button(self.tr("Stop update"), enable=False)
+        self._lock_update_button_temporarily()
+        logger.info("触发资源更新，按版本检查并下载资源包")
+        signalBus.info_bar_requested.emit("info", self.tr("Starting Resource Update"))
+
+        interface = self._service_coordinator.task.interface or {}
+        self._updater = Update(
+            service_coordinator=self._service_coordinator,
+            stop_signal=signalBus.update_stopped,
+            progress_signal=signalBus.update_progress,
+            info_bar_signal=signalBus.info_bar_requested,
+            interface=interface,
+            force_full_download=False,
+            update_target="resource",
         )
         self._updater.start()
 

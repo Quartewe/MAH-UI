@@ -495,6 +495,18 @@
         <translation>今すぐ更新</translation>
     </message>
     <message>
+        <source>Software Update</source>
+        <translation>ソフトウェア更新</translation>
+    </message>
+    <message>
+        <source>Resource Update</source>
+        <translation>リソース更新</translation>
+    </message>
+    <message>
+        <source>Software Update Now</source>
+        <translation>今すぐソフトウェア更新</translation>
+    </message>
+    <message>
         <source>Open update log</source>
         <translation>更新ログを開く</translation>
     </message>
@@ -763,6 +775,22 @@ Please check for updates first, or visit the GitHub releases page.</source>
     <message>
         <source>Force use GitHub for resource update</source>
         <translation>リソース更新で GitHub を強制使用します</translation>
+    </message>
+    <message>
+        <source>Resource version: </source>
+        <translation>リソースバージョン：</translation>
+    </message>
+    <message>
+        <source>Latest resource version: </source>
+        <translation>最新リソースバージョン：</translation>
+    </message>
+    <message>
+        <source>Service is not ready, cannot update resource</source>
+        <translation>サービス未準備のため、リソースを更新できません</translation>
+    </message>
+    <message>
+        <source>Starting Resource Update</source>
+        <translation>リソース更新を開始中</translation>
     </message>
     <message>
         <source>GitHub API Key</source>
