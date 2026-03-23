@@ -130,7 +130,7 @@ if sys.platform == "darwin":
 
 elif sys.platform == "win32":
     base_command += [
-        "--icon=./app/assets/icons/logo.ico",
+        "--icon=./app/assets/icons/app.ico",
         "--distpath",
         os.path.join("dist"),
     ]
@@ -173,7 +173,7 @@ else:
 
 maa_bin_internal = os.path.join(internal_dir, "maa", "bin")
 if os.path.isdir(maa_bin_internal):
-    shutil.rmtree(maa_bin_internal)
+    print(f"[INFO] Keep runtime libraries directory: {maa_bin_internal}")
 
 # 复制README和许可证
 if os.path.isdir(dist_dir):
@@ -192,6 +192,13 @@ if os.path.isdir(dist_dir):
 else:
     print(f"[ERROR] dist/MAH directory not found: {dist_dir}")
     sys.exit(1)
+
+ui_icon_src = os.path.join(os.getcwd(), "app", "assets", "icons", "logo.png")
+ui_icon_dst = os.path.join(dist_dir, "icon.png")
+if os.path.isfile(ui_icon_src):
+    shutil.copy(ui_icon_src, ui_icon_dst)
+else:
+    print(f"[WARN] UI icon not found, skipping copy: {ui_icon_src}")
 
 # 复制插件目录（若存在）
 plugins_dir = os.path.join(os.getcwd(), "plugins")
