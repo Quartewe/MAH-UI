@@ -91,7 +91,7 @@ except FileNotFoundError as e:
 # === PyInstaller 配置生成 ===
 base_command = [
     "main.py",
-    "--name=MFW",
+    "--name=MAH",
     "--clean",
     "--noconfirm",  # 禁用确认提示
     # 资源包含规则（格式：源路径{分隔符}目标目录）
