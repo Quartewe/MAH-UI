@@ -21,7 +21,7 @@ MFW-ChainFlow Assistant
 MFW-ChainFlow Assistant 打包脚本
 作者:overflow65537
 """
-import PyInstaller.__main__
+import subprocess
 import os
 import site
 import shutil
@@ -146,7 +146,20 @@ elif sys.platform == "linux":
 # === 开始构建 ===
 print("[INFO] Starting MFW build")
 print(f"\n\n[DEBUG] base_command: {base_command}\n\n")
-PyInstaller.__main__.run(base_command)
+
+# 用 subprocess 调用 pyinstaller，以便捕获所有输出
+cmd = [sys.executable, "-m", "PyInstaller"] + base_command
+print(f"[DEBUG] Running command: {' '.join(cmd)}\n")
+result = subprocess.run(cmd, cwd=os.getcwd())
+
+if result.returncode != 0:
+    print(f"[ERROR] PyInstaller failed with exit code {result.returncode}")
+    sys.exit(result.returncode)
+
+# 检查构建是否成功
+if not os.path.isdir(os.path.join(os.getcwd(), "dist", "MFW")):
+    print("[ERROR] PyInstaller failed to generate dist/MFW directory")
+    sys.exit(1)
 
 # === 构建后处理 ===
 dist_dir = os.path.join(os.getcwd(), "dist", "MFW")
@@ -209,7 +222,13 @@ updater_command = [
     "--distpath",
     os.path.join("dist", "MFW"),
 ]
-PyInstaller.__main__.run(updater_command)
+print("[INFO] Starting MFWUpdater build")
+cmd = [sys.executable, "-m", "PyInstaller"] + updater_command
+result = subprocess.run(cmd, cwd=os.getcwd())
+if result.returncode != 0:
+    print(f"[WARN] MFWUpdater build failed with exit code {result.returncode}, continuing anyway")
+else:
+    print("[INFO] MFWUpdater build completed successfully")
 
 
 def generate_file_list(input_dir, output_file=None):
