@@ -10,6 +10,11 @@ on:
     branches:    
       - main    
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "手动发布时使用的版本号（如 v1.0.1）"
+        required: false
+        default: ""
 
 jobs:
   changelog:
@@ -41,11 +46,22 @@ jobs:
           fetch-depth: 0
       - id: set_tag
         run: |
-          # 检查标签格式
-          if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)?$ ]]; then
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+
+          # 自动触发（tag push）
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)?$ ]]; then
             is_release=true
             tag=${GITHUB_REF#refs/tags/}
             echo "Release tag format is valid: $tag"
+          # 手动触发且显式指定 tag
+          elif [[ -n "$INPUT_TAG" ]]; then
+            is_release=true
+            if [[ "$INPUT_TAG" =~ ^v ]]; then
+              tag="$INPUT_TAG"
+            else
+              tag="v$INPUT_TAG"
+            fi
+            echo "Manual release tag: $tag"
           else
             is_release=false
             # 获取最新的发布标签
