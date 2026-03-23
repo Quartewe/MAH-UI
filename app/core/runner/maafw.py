@@ -46,6 +46,41 @@ from PySide6.QtCore import QObject, Signal
 from app.utils.logger import logger
 
 
+def _resolve_toolkit_runtime_dir() -> Path:
+    if not getattr(sys, "frozen", False):
+        return Path("./")
+
+    app_dir = Path(sys.executable).resolve().parent
+    toolkit_file_names = (
+        "MaaToolkit.dll",
+        "libMaaToolkit.so",
+        "libMaaToolkit.dylib",
+    )
+
+    candidates: List[Path] = []
+
+    runtimes_root = app_dir / "runtimes"
+    if runtimes_root.is_dir():
+        for native_dir in sorted(runtimes_root.glob("*/native")):
+            candidates.append(native_dir)
+
+    candidates.extend(
+        [
+            app_dir / "_internal" / "maa" / "bin",
+            app_dir / "maa" / "bin",
+            app_dir,
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.is_dir() and any(
+            (candidate / file_name).exists() for file_name in toolkit_file_names
+        ):
+            return candidate
+
+    return app_dir
+
+
 # 以下代码引用自 MaaDebugger 项目的 ./src/MaaDebugger/maafw/__init__.py 文件，用于生成maafw实例
 class MaaFWError(Enum):
     RESOURCE_OR_CONTROLLER_NOT_INITIALIZED = 1
@@ -217,7 +252,9 @@ class MaaFW(QObject):
         # 确保正确初始化 QObject 基类，避免 Qt 运行时错误
         super().__init__()
 
-        Toolkit.init_option("./")
+        runtime_dir = _resolve_toolkit_runtime_dir()
+        Toolkit.init_option(str(runtime_dir))
+        logger.info(f"MaaToolkit runtime dir: {runtime_dir}")
         self.resource = None
         self.controller = None
         self.tasker = None
