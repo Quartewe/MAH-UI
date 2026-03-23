@@ -203,6 +203,15 @@ shutil.copy(
     os.path.join(os.getcwd(), "dist", "MFW", "MFW_LICENSE"),
 )
 
+# 复制插件目录（若存在）
+plugins_dir = os.path.join(os.getcwd(), "plugins")
+dist_plugins_dir = os.path.join(os.getcwd(), "dist", "MFW", "plugins")
+if os.path.isdir(plugins_dir):
+    shutil.copytree(plugins_dir, dist_plugins_dir, dirs_exist_ok=True)
+    print(f"[INFO] Plugins copied to: {dist_plugins_dir}")
+else:
+    print(f"[WARN] Plugins directory not found, skipping: {plugins_dir}")
+
 os.makedirs(os.path.join(os.getcwd(), "dist", "MFW", "app", "i18n"), exist_ok=True)
 # 复制i18n文件
 for qm_file in ["i18n.zh_CN.qm", "i18n.zh_HK.qm", "i18n.ja_JP.qm"]:
