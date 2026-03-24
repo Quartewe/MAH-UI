@@ -3098,41 +3098,68 @@ class MainWindow(MSFluentWindow):
             self._clear_maafw_sync()
             self._stop_notice_thread(send_thread)
             self._stop_update_workers()
-            # self._terminate_child_processes()
         except Exception as e:
             logger.exception("异步清理失败", exc_info=e)
+        finally:
+            self._terminate_child_processes()
 
     def _clear_maafw_sync(self):
         """同步清理 maafw（回退逻辑）"""
         maafw = self.service_coordinator.task_runner.maafw
-        try:
-            if maafw.tasker and maafw.tasker.running:
-                logger.debug("停止任务线程")
-                maafw.tasker.post_stop().wait()
-                logger.debug("停止任务线程完成")
-            maafw.tasker = None
-            if maafw.resource:
+        if not maafw:
+            return
+
+        if maafw.tasker:
+            try:
+                if maafw.tasker.running:
+                    logger.debug("停止任务线程")
+                    maafw.tasker.post_stop().wait()
+                    logger.debug("停止任务线程完成")
+            except Exception as e:
+                logger.exception("停止任务线程失败", exc_info=e)
+            finally:
+                maafw.tasker = None
+
+        if maafw.resource:
+            try:
                 maafw.resource.clear()
-            maafw.resource = None
-            maafw.controller = None
-            if maafw.agent:
+            except Exception as e:
+                logger.exception("清理资源失败", exc_info=e)
+            finally:
+                maafw.resource = None
+
+        maafw.controller = None
+
+        if maafw.agent:
+            try:
                 maafw.agent.disconnect()
-            maafw.agent = None
-            agent_proc = getattr(maafw, "agent_thread", None)
-            if agent_proc:
+            except Exception as e:
+                logger.exception("断开 agent 连接失败", exc_info=e)
+            finally:
+                maafw.agent = None
+
+        agent_proc = getattr(maafw, "agent_thread", None)
+        if agent_proc:
+            try:
+                agent_proc.terminate()
                 try:
-                    agent_proc.terminate()
-                    try:
-                        agent_proc.wait(timeout=5)
-                    except Exception:
-                        agent_proc.kill()
-                    logger.debug("终止 maafw agent 子进程")
-                except Exception as agent_err:
-                    logger.warning("终止 maafw agent 失败: %s", agent_err)
-                finally:
-                    maafw.agent_thread = None
-        except Exception as e:
-            logger.exception("清理 maafw 失败", exc_info=e)
+                    agent_proc.wait(timeout=5)
+                except Exception:
+                    agent_proc.kill()
+                logger.debug("终止 maafw agent 子进程")
+            except Exception as agent_err:
+                logger.warning("终止 maafw agent 失败: %s", agent_err)
+            finally:
+                maafw.agent_thread = None
+
+        agent_output_thread = getattr(maafw, "agent_output_thread", None)
+        if agent_output_thread:
+            try:
+                agent_output_thread.join(timeout=0.2)
+            except Exception as e:
+                logger.warning("等待 agent 输出线程退出失败: %s", e)
+            finally:
+                maafw.agent_output_thread = None
 
     def _stop_notice_thread(self, send_thread):
         """关闭通知线程，确保队列循环退出。"""
@@ -3216,6 +3243,8 @@ class MainWindow(MSFluentWindow):
                 "MFWUpdater1.exe",
                 "MFWUpdater",
                 "MFWUpdater1",
+                "MAHUpdater.exe",
+                "MAHUpdater",
             }
 
             current = psutil.Process(os.getpid())
