@@ -733,16 +733,25 @@ class MaaFW(QObject):
         # 使用 sys.frozen 判断是否打包（PyInstaller 标准方式）
         is_packed = getattr(sys, "frozen", False)
         encoding = "utf-8" if is_packed else "gbk"
+
+        popen_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "encoding": encoding,
+            "errors": "replace",
+            "bufsize": 1,
+        }
+
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            popen_kwargs["startupinfo"] = startupinfo
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
         try:
-            agent_process = subprocess.Popen(
-                start_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding=encoding,
-                errors="replace",
-                bufsize=1,
-            )
+            agent_process = subprocess.Popen(start_cmd, **popen_kwargs)
             self.agent_thread = agent_process
             self._watch_agent_output(agent_process)
         except Exception as e:
