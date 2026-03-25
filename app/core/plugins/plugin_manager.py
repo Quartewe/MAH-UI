@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.plugins.plugin_base import PluginBase, PluginContext
+from app.core.plugins.i18n import get_current_ui_language_code, resolve_plugin_i18n_text
 
 
 @dataclass(slots=True)
@@ -21,10 +22,31 @@ class PluginManager:
     def __init__(self, plugin_dir: Path, ctx: PluginContext):
         self.plugin_dir = plugin_dir
         self.ctx = ctx
+        self._language_code = get_current_ui_language_code()
         self.loaded_plugins: dict[str, PluginBase] = {}
         self.enabled_map: dict[str, bool] = {}
         self.failed_plugins: dict[str, str] = {}
         self._pending_nav_entries: list[tuple[str, PluginBase]] = []
+        self._bind_context_i18n()
+
+    def _bind_context_i18n(self) -> None:
+        self._language_code = get_current_ui_language_code()
+        self.ctx.language_code = self._language_code
+        self.ctx.resolve_i18n = (
+            lambda value, i18n_map=None: resolve_plugin_i18n_text(
+                value,
+                i18n_map,
+                language_code=self._language_code,
+            )
+        )
+
+    def _resolve_meta_text(self, plugin: PluginBase, value: str) -> str:
+        meta_i18n = getattr(plugin.meta, "i18n", None)
+        return resolve_plugin_i18n_text(
+            value,
+            meta_i18n,
+            language_code=self._language_code,
+        )
 
     def discover_plugin_files(self) -> list[Path]:
         if not self.plugin_dir.exists():
@@ -37,6 +59,7 @@ class PluginManager:
         )
 
     def load_all(self) -> list[PluginLoadResult]:
+        self._bind_context_i18n()
         self._pending_nav_entries.clear()
         results: list[PluginLoadResult] = []
         for file_path in self.discover_plugin_files():
@@ -68,12 +91,18 @@ class PluginManager:
 
             meta = plugin.meta
             plugin_id = str(getattr(meta, "plugin_id", "")).strip()
-            name = str(getattr(meta, "name", "")).strip()
+            raw_name = str(getattr(meta, "name", "")).strip()
+            raw_description = str(getattr(meta, "description", "")).strip()
+            name = self._resolve_meta_text(plugin, raw_name).strip()
+            resolved_description = self._resolve_meta_text(plugin, raw_description).strip()
 
             if not plugin_id:
                 raise RuntimeError("plugin_id 不能为空")
             if not name:
                 raise RuntimeError("name 不能为空")
+
+            meta.name = name
+            meta.description = resolved_description
             if plugin_id in self.loaded_plugins:
                 return PluginLoadResult(plugin_id=plugin_id, ok=True, message="已加载")
 

@@ -81,6 +81,12 @@ def _resolve_toolkit_runtime_dir() -> Path:
     return app_dir
 
 
+def _resolve_toolkit_user_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
 # 以下代码引用自 MaaDebugger 项目的 ./src/MaaDebugger/maafw/__init__.py 文件，用于生成maafw实例
 class MaaFWError(Enum):
     RESOURCE_OR_CONTROLLER_NOT_INITIALIZED = 1
@@ -253,8 +259,10 @@ class MaaFW(QObject):
         super().__init__()
 
         runtime_dir = _resolve_toolkit_runtime_dir()
-        Toolkit.init_option(str(runtime_dir))
+        user_dir = _resolve_toolkit_user_dir()
+        Toolkit.init_option(str(user_dir))
         logger.info(f"MaaToolkit runtime dir: {runtime_dir}")
+        logger.info(f"MaaToolkit user dir: {user_dir}")
         self.resource = None
         self.controller = None
         self.tasker = None

@@ -49,6 +49,22 @@ def create_plugin() -> PluginBase:
 - `description: str = ""`：描述（用于集合页和管理页）
 - `icon: str = "APPLICATION"`：图标名（支持 `MESSAGE` / `FOLDER` / `FIF.MESSAGE` 等）
 - `entry_position: str = "top"`：保留字段（当前主要使用 top）
+- `i18n: dict[str, dict[str, str]] | None = None`：插件内置翻译表（可选）
+
+当 `name` / `description` 使用 `"$key"` 形式时，插件系统会根据当前 UI 语言从 `meta.i18n` 中自动解析：
+
+```python
+meta = PluginMeta(
+    plugin_id="demo.plugin",
+    name="$plugin_name",
+    description="$plugin_desc",
+    version="0.1.0",
+    i18n={
+        "zh_cn": {"plugin_name": "示例插件", "plugin_desc": "示例描述"},
+        "en_us": {"plugin_name": "Demo Plugin", "plugin_desc": "Demo description"},
+    },
+)
+```
 
 ### 3.2 生命周期 `PluginBase`
 
@@ -64,6 +80,14 @@ def create_plugin() -> PluginBase:
 - `logger`
 - `signal_bus`
 - `service_coordinator`
+- `language_code`：当前 UI 语言代码（例如 `zh_cn` / `en_us` / `ja_jp`）
+- `tr(value, i18n_map=None)`：解析 `"$key"` 文本的快捷函数
+
+`ctx.tr()` 使用示例：
+
+```python
+title = QLabel(ctx.tr("$page_title", self.meta.i18n))
+```
 
 > 建议只使用前端能力，不要在插件中耦合后端关键流程。
 

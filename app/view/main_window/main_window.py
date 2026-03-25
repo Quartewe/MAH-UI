@@ -36,6 +36,7 @@ import json
 import shutil
 import sys
 import threading
+import unicodedata
 import zipfile
 from datetime import datetime, timedelta
 
@@ -390,6 +391,45 @@ class MainWindow(MSFluentWindow):
     _THEME_LISTENER_TIMEOUT_MS = (
         2000  # 2 seconds timeout for theme listener thread termination
     )
+
+    @staticmethod
+    def _string_display_width(value: str) -> int:
+        width = 0
+        for ch in str(value or ""):
+            width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        return width
+
+    @classmethod
+    def _wrap_sidebar_text(cls, text: str, max_width: int = 12) -> str:
+        content = str(text or "").strip()
+        if not content or "\n" in content:
+            return content
+        if cls._string_display_width(content) <= max_width:
+            return content
+
+        lines: list[str] = []
+        current_line: list[str] = []
+        current_width = 0
+
+        for ch in content:
+            ch_width = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+            if current_line and current_width + ch_width > max_width:
+                lines.append("".join(current_line).strip())
+                current_line = [ch]
+                current_width = ch_width
+            else:
+                current_line.append(ch)
+                current_width += ch_width
+
+        if current_line:
+            lines.append("".join(current_line).strip())
+
+        lines = [line for line in lines if line]
+        return "\n".join(lines) if lines else content
+
+    def addSubInterface(self, interface, icon, text, *args, **kwargs):
+        wrapped_text = self._wrap_sidebar_text(str(text or ""))
+        return super().addSubInterface(interface, icon, wrapped_text, *args, **kwargs)
 
     def __init__(
         self,
@@ -793,7 +833,7 @@ class MainWindow(MSFluentWindow):
                     0,
                     "bundle_interface",
                     FIF.FOLDER,
-                    self.tr("Bundle"),
+                    self._wrap_sidebar_text(self.tr("Bundle")),
                     onClick=lambda: self.stackedWidget.setCurrentWidget(
                         self.BundleInterface
                     ),
@@ -1368,7 +1408,7 @@ class MainWindow(MSFluentWindow):
             self.navigationInterface.addItem(
                 routeKey=widget.objectName(),
                 icon=icon,
-                text=title,
+                text=self._wrap_sidebar_text(title),
                 onClick=lambda _=False, w=widget: self.switchTo(w),
                 position=NavigationItemPosition.TOP,
             )
@@ -1392,7 +1432,7 @@ class MainWindow(MSFluentWindow):
                 self.navigationInterface.addItem(
                     routeKey=self._plugin_collection_widget.objectName(),
                     icon=FIF.FOLDER,
-                    text=self.tr("Plugin Collection"),
+                    text=self._wrap_sidebar_text(self.tr("Plugin Collection")),
                     onClick=lambda _=False: self.switchTo(self._plugin_collection_widget),
                     position=NavigationItemPosition.TOP,
                 )
@@ -2486,7 +2526,7 @@ class MainWindow(MSFluentWindow):
             0,
             "announcement_button",
             FIF.MEGAPHONE,
-            self.tr("Announcement"),
+            self._wrap_sidebar_text(self.tr("Announcement")),
             onClick=self._on_announcement_button_clicked,
             selectable=False,
             position=NavigationItemPosition.BOTTOM,
