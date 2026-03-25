@@ -1293,31 +1293,48 @@ def _get_resource_dirs_from_interface(interface_data: dict) -> list[Path]:
     return dirs
 
 
-def _backup_resources_and_cleanup_pipelines(
+def _strip_pipeline_dirs_from_hotfix(
+    hotfix_root: Path,
+    project_path: Path,
     resource_dirs: list[Path],
-    backup_root: Path,
-) -> list[tuple[Path, Path]]:
+) -> int:
     """
-    备份资源目录到 backup_root，并删除每个资源目录下的 pipeline 目录（若存在）。
-    返回 (original_path, backup_path) 列表，用于失败回滚。
+    从热更包中移除 pipeline 目录，避免覆盖本地自定义 pipeline。
+    返回移除的 pipeline 目录数量。
     """
-    backup_root.mkdir(parents=True, exist_ok=True)
-    backups: list[tuple[Path, Path]] = []
-    for resource_path in resource_dirs:
-        backup_target = backup_root / resource_path.name
-        update_logger.info(f"[步骤5] 备份资源目录: {resource_path} -> {backup_target}")
-        if backup_target.is_dir():
-            shutil.rmtree(backup_target)
-        shutil.copytree(str(resource_path), str(backup_target))
-        update_logger.info(f"[步骤5] 资源目录备份完成: {resource_path}")
-        backups.append((resource_path, backup_target))
+    removed_count = 0
+    processed_resources: set[Path] = set()
 
-        pipeline_path = resource_path / "pipeline"
-        if pipeline_path.exists():
-            update_logger.info(f"[步骤5] 删除旧 pipeline 目录: {pipeline_path}")
-            shutil.rmtree(str(pipeline_path))
-            update_logger.info(f"[步骤5] pipeline 目录删除完成: {pipeline_path}")
-    return backups
+    for resource_path in resource_dirs:
+        try:
+            relative_resource_path = resource_path.resolve().relative_to(
+                project_path.resolve()
+            )
+        except ValueError:
+            update_logger.debug(f"[步骤5] 跳过非项目内资源路径: {resource_path}")
+            continue
+
+        if relative_resource_path in processed_resources:
+            continue
+        processed_resources.add(relative_resource_path)
+
+        hotfix_resource_root = hotfix_root / relative_resource_path
+        if not hotfix_resource_root.is_dir():
+            continue
+
+        for pipeline_dir in hotfix_resource_root.rglob("pipeline"):
+            if not pipeline_dir.is_dir():
+                continue
+            try:
+                shutil.rmtree(pipeline_dir)
+                removed_count += 1
+                update_logger.info(f"[步骤5] 已跳过热更中的 pipeline 目录: {pipeline_dir}")
+            except Exception as strip_err:
+                update_logger.warning(
+                    f"[步骤5] 移除热更中的 pipeline 目录失败: {pipeline_dir} -> {strip_err}"
+                )
+
+    return removed_count
 
 
 def _update_interface_version(interface_paths: list[Path], version: str) -> bool:
@@ -1446,25 +1463,21 @@ def apply_github_hotfix(package_path, metadata=None):
         return False
     update_logger.info(f"[步骤5] 验证 hotfix 目录存在: {hotfix_root}")
 
-    # 备份并删除资源文件中的 pipeline 目录，以供后续无损覆盖
-    resource_backup_dir = Path.cwd() / "backup" / "resource"
-    update_logger.info(f"[步骤5] 创建资源备份目录: {resource_backup_dir}")
-    resource_backup_dir.mkdir(parents=True, exist_ok=True)
-
     update_logger.info("[步骤5] 读取 interface 配置文件...")
     interface_paths, interface_data = _load_interface_data(bundle_path_obj)
     resource_dirs = _get_resource_dirs_from_interface(interface_data)
     update_logger.info(f"[步骤5] 获取到 {len(resource_dirs)} 个资源目录")
-    resource_backups: list[tuple[Path, Path]] = []
 
     try:
-        update_logger.info("[步骤5] 开始备份资源目录和清理 pipeline 目录...")
-        resource_backups = _backup_resources_and_cleanup_pipelines(
-            resource_dirs, resource_backup_dir
+        removed_pipeline_dirs = _strip_pipeline_dirs_from_hotfix(
+            Path(hotfix_root),
+            project_path,
+            resource_dirs,
         )
-        update_logger.info(
-            f"[步骤5] 资源备份和清理完成，共处理 {len(resource_backups)} 个资源目录"
-        )
+        if removed_pipeline_dirs:
+            update_logger.info(
+                f"[步骤5] 已保护本地 pipeline，热更包中共移除 {removed_pipeline_dirs} 个 pipeline 目录"
+            )
 
         update_logger.info(f"[步骤5] 开始覆盖项目目录: {hotfix_root} -> {project_path}")
         # 允许目标目录已存在（Python 3.8+ 支持 dirs_exist_ok）
@@ -1495,21 +1508,10 @@ def apply_github_hotfix(package_path, metadata=None):
         return True
 
     except Exception as e:
-        # 资源目录异常回滚
         update_logger.error(f"[步骤5] 热更新过程中出现错误: {e}")
-        _rollback_resource_backups(resource_backups)
         update_logger.exception("[GitHub热更新] 热更新失败，详细信息:")
         update_logger.error("=" * 50)
         return False
-    finally:
-        # 清理资源备份目录
-        if resource_backup_dir.exists():
-            try:
-                update_logger.info(f"[步骤5] 清理资源备份目录: {resource_backup_dir}")
-                shutil.rmtree(resource_backup_dir)
-                update_logger.info("[步骤5] 资源备份目录清理完成")
-            except Exception as cleanup_err:
-                update_logger.warning(f"[步骤5] 清理资源备份目录失败: {cleanup_err}")
 
 
 def apply_mirror_hotfix(package_path):

@@ -454,6 +454,57 @@ class BaseUpdate(QThread):
             except Exception as err:
                 logger.debug("[步骤5] 清理更新数据失败: %s -> %s", path, err)
 
+    def _strip_pipeline_dirs_from_hotfix(
+        self, hotfix_root: Path, project_path: Path
+    ) -> int:
+        """
+        从热更包中移除 pipeline 目录，避免覆盖本地自定义 pipeline。
+        """
+        removed_count = 0
+        resource_list = self.interface.get("resource", [])
+        processed_resources: set[Path] = set()
+
+        for resource in resource_list:
+            for resource_path_str in resource.get("path", []):
+                resource_path = Path(
+                    resource_path_str.replace("{PROJECT_DIR}", str(project_path))
+                )
+                if not resource_path.is_absolute():
+                    resource_path = project_path / resource_path
+
+                try:
+                    relative_resource_path = resource_path.relative_to(project_path)
+                except ValueError:
+                    logger.debug("[步骤5] 跳过非项目内资源路径: %s", resource_path)
+                    continue
+
+                if relative_resource_path in processed_resources:
+                    continue
+                processed_resources.add(relative_resource_path)
+
+                hotfix_resource_root = hotfix_root / relative_resource_path
+                if not hotfix_resource_root.is_dir():
+                    continue
+
+                for pipeline_dir in hotfix_resource_root.rglob("pipeline"):
+                    if not pipeline_dir.is_dir():
+                        continue
+                    try:
+                        shutil.rmtree(pipeline_dir)
+                        removed_count += 1
+                        logger.debug(
+                            "[步骤5] 已跳过热更中的 pipeline 目录: %s",
+                            pipeline_dir,
+                        )
+                    except Exception as strip_err:
+                        logger.warning(
+                            "[步骤5] 移除热更中的 pipeline 目录失败: %s -> %s",
+                            pipeline_dir,
+                            strip_err,
+                        )
+
+        return removed_count
+
     def _write_update_metadata(
         self,
         download_dir: Path,
@@ -1369,45 +1420,15 @@ class Update(BaseUpdate):
                 logger.error("[步骤5] hotfix 目录不存在，无法覆盖")
                 return self._stop_with_notice(2)
 
-            # 备份并删除资源文件中的 pipeline 目录，以供后续无损覆盖
-            resource_backup_dir = Path.cwd() / "backup" / "resource"
-            resource_backup_dir.mkdir(parents=True, exist_ok=True)
-            resource_list = self.interface.get("resource", [])
-            known_resources: list[str] = []
-            resource_backups.clear()
-            for resource in resource_list:
-                for resource_path_str in resource.get("path", []):
-                    resource_path = Path(
-                        resource_path_str.replace("{PROJECT_DIR}", ".")
-                    )
-                    if resource_path.is_dir() and (
-                        resource_path_str not in known_resources
-                    ):
-                        backup_target = resource_backup_dir / resource_path.name
-                        try:
-                            # 先备份资源
-                            if backup_target.is_dir():
-                                shutil.rmtree(backup_target)
-                            shutil.copytree(str(resource_path), str(backup_target))
-                            logger.debug("[步骤5] 已备份资源目录: %s", resource_path)
-
-                            resource_backups.append((resource_path, backup_target))
-                            known_resources.append(resource_path_str)
-
-                            # 再删除旧的 pipeline 目录，避免影响后续覆盖
-                            pipeline_path = resource_path / "pipeline"
-                            if pipeline_path.exists():
-                                shutil.rmtree(str(pipeline_path))
-                                logger.debug(
-                                    "[步骤5] 已删除旧 pipeline 目录: %s", pipeline_path
-                                )
-                        except Exception as backup_err:
-                            logger.exception(
-                                "[步骤5] 备份或清理资源目录时出错: %s -> %s",
-                                resource_path,
-                                backup_err,
-                            )
-                            raise
+            removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
+                hotfix_root,
+                project_path,
+            )
+            if removed_pipeline_dirs:
+                logger.info(
+                    "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
+                    removed_pipeline_dirs,
+                )
 
             logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
             # 允许目标目录已存在（Python 3.8+ 支持 dirs_exist_ok）
@@ -2305,47 +2326,15 @@ class MultiResourceUpdate(Update):
                 logger.error("[步骤5] hotfix 目录不存在，无法覆盖")
                 return self._stop_with_notice(2)
 
-            # 备份并删除资源文件中的 pipeline 目录，以供后续无损覆盖
-            resource_backup_dir = Path.cwd() / "backup" / "resource"
-            resource_backup_dir.mkdir(parents=True, exist_ok=True)
-            resource_list = self.interface.get("resource", [])
-            known_resources: list[str] = []
-            resource_backups.clear()
-            for resource in resource_list:
-                logger.debug("[步骤5] 处理资源: %s", resource.get("name", ""))
-
-                for resource_path_str in resource.get("path", []):
-                    logger.debug("[步骤5] 处理资源路径: %s", resource_path_str)
-                    resource_path = Path(resource_path_str.replace("{PROJECT_DIR}", ""))
-                    if resource_path.is_dir() and (
-                        resource_path_str not in known_resources
-                    ):
-                        backup_target = resource_backup_dir / resource_path.name
-                        try:
-                            # 先备份资源
-                            if backup_target.is_dir():
-                                shutil.rmtree(backup_target)
-                            shutil.copytree(str(resource_path), str(backup_target))
-                            logger.debug("[步骤5] 已备份资源目录: %s", resource_path)
-
-                            resource_backups.append((resource_path, backup_target))
-                            known_resources.append(resource_path_str)
-
-                            # 再删除旧的 pipeline 目录，避免影响后续覆盖
-                            pipeline_path = resource_path / "pipeline"
-                            if pipeline_path.exists():
-                                shutil.rmtree(str(pipeline_path))
-                                logger.debug(
-                                    "[步骤5] 已删除旧 pipeline 目录: %s",
-                                    pipeline_path,
-                                )
-                        except Exception as backup_err:
-                            logger.exception(
-                                "[步骤5] 备份或清理资源目录时出错: %s -> %s",
-                                resource_path,
-                                backup_err,
-                            )
-                            raise
+            removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
+                hotfix_root,
+                project_path,
+            )
+            if removed_pipeline_dirs:
+                logger.info(
+                    "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
+                    removed_pipeline_dirs,
+                )
 
             logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
             # 允许目标目录已存在（Python 3.8+ 支持 dirs_exist_ok）
