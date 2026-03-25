@@ -1784,9 +1784,9 @@ class SettingInterface(QWidget):
         name = metadata.get("name", "")
         # 保存项目名称，用于更新日志等功能
         self.name = name if name else "MFW_CFA"
-        current_version = metadata.get("version", "0.0.1")
-        resource_version = metadata.get("resource_version", current_version)
-        last_version = cfg.get(cfg.latest_update_version) or current_version
+        mah_current_version = metadata.get("version", "0.0.1")
+        resource_version = metadata.get("resource_version", mah_current_version)
+        mah_latest_version = cfg.get(cfg.latest_update_version) or mah_current_version
         latest_resource_version = (
             cfg.get(cfg.latest_resource_update_version) or resource_version
         )
@@ -1801,17 +1801,17 @@ class SettingInterface(QWidget):
 
         maafw_version = Library.version()
         self.version_label.setText(
-            self.tr("Current version: ")
-            + str(current_version)
-            + "    "
-            + self.tr("Resource version: ")
+            self.tr("Resource version: ")
             + str(resource_version)
             + "    "
             + self.tr("Latest resource version: ")
             + str(latest_resource_version)
             + "    "
+            + self.tr("Current version: ")
+            + str(mah_current_version)
+            + "    "
             + self.tr("Latest version: ")
-            + str(last_version)
+            + str(mah_latest_version)
             + "    "
             + self.tr("UI version: ")
             + str(UI_VERSION)
