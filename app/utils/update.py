@@ -505,6 +505,34 @@ class BaseUpdate(QThread):
 
         return removed_count
 
+    def _normalize_hotfix_resource_layout(self, hotfix_root: Path) -> None:
+        """
+        统一热更包资源布局到 MAH 运行时约定：
+        - index -> resource/index
+        - image/model/pipeline -> resource/base/{image|model|pipeline}
+        """
+        if not hotfix_root or not hotfix_root.exists() or not hotfix_root.is_dir():
+            return
+
+        resource_root = hotfix_root / "resource"
+        resource_root.mkdir(parents=True, exist_ok=True)
+        base_root = resource_root / "base"
+        base_root.mkdir(parents=True, exist_ok=True)
+
+        index_src = hotfix_root / "index"
+        if index_src.is_dir():
+            shutil.copytree(index_src, resource_root / "index", dirs_exist_ok=True)
+            shutil.rmtree(index_src)
+
+        for dirname in ("image", "model", "pipeline"):
+            src = hotfix_root / dirname
+            if not src.is_dir():
+                continue
+            dst = base_root / dirname
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+            shutil.rmtree(src)
+
     def _write_update_metadata(
         self,
         download_dir: Path,
@@ -1405,6 +1433,10 @@ class Update(BaseUpdate):
                 logger.error("[步骤4] 解压更新包失败")
                 return self._stop_with_notice(2)
             logger.info("[步骤4] 更新包解压完成: %s", hotfix_root)
+            self._normalize_hotfix_resource_layout(hotfix_root)
+            logger.debug("[步骤4] 已完成资源目录布局归并")
+            self._normalize_hotfix_resource_layout(hotfix_root)
+            logger.debug("[步骤4] 已完成资源目录布局归并")
 
             # 获取 bundle 路径
             bundle_path = self._get_bundle_path()

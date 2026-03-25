@@ -251,34 +251,30 @@ class OptionFormWidget(QWidget):
 
         child_widget = option_item.find_child_widget(option_value, child_config)
         if child_widget:
-            # 注意：不需要设置可见性，因为 set_value 已经通过 _update_children_visibility 处理了
-            
-            # 递归应用子选项的配置
-            # 根据子选项的类型决定如何处理配置
-            if isinstance(child_config, dict):
-                # 如果是配置格式（包含 value 字段）
-                if "value" in child_config:
-                    # 先保存 children 配置
-                    children_config = child_config.get("children", {})
-                    
-                    # 设置子选项的值（这会触发子选项的 _update_children_visibility）
-                    child_widget.set_value(child_config["value"])
-                    
-                    # 如果有子选项的子选项，递归应用（使用 _apply_children_config 以支持 hidden 字段）
-                    if children_config:
-                        self._apply_children_config(child_widget, children_config)
-                else:
-                    # 如果字典不包含 value 字段，可能是输入框的值（inputs 类型）
-                    # 需要根据子选项的类型来判断
-                    if child_widget.config_type in ["lineedit", "input", "inputs"]:
-                        # input/inputs 类型可以接收字典
-                        child_widget.set_value(child_config)
-                    else:
-                        # 其他类型（如 combobox）不应该接收字典
-                        logger.warning(f"子选项类型 {child_widget.config_type} 不应该接收字典值: {child_config}")
+            self._apply_child_widget_config(child_widget, child_config)
+
+    def _apply_child_widget_config(self, child_widget: "OptionItemBase", child_config: Any):
+        """将配置应用到已定位的子选项控件"""
+        # 注意：不需要设置可见性，因为 set_value 已经通过 _update_children_visibility 处理了
+        if isinstance(child_config, dict):
+            # 如果是配置格式（包含 value 字段）
+            if "value" in child_config:
+                children_config = child_config.get("children", {})
+
+                # 设置子选项的值（这会触发子选项的 _update_children_visibility）
+                child_widget.set_value(child_config["value"])
+
+                # 如果有子选项的子选项，递归应用（使用 _apply_children_config 以支持 hidden 字段）
+                if children_config:
+                    self._apply_children_config(child_widget, children_config)
             else:
-                # 非字典值直接传递
-                child_widget.set_value(child_config)
+                # 如果字典不包含 value 字段，可能是输入框的值（inputs 类型）
+                if child_widget.config_type in ["lineedit", "input", "inputs"]:
+                    child_widget.set_value(child_config)
+                else:
+                    logger.warning(f"子选项类型 {child_widget.config_type} 不应该接收字典值: {child_config}")
+        else:
+            child_widget.set_value(child_config)
     
     def _apply_children_config(self, option_item: "OptionItemBase", children_config: Dict[str, Any]):
         """
@@ -309,6 +305,8 @@ class OptionFormWidget(QWidget):
             # 尝试方式2：config_key 是旧格式的内部 key
             if not option_value:
                 option_value = option_item.get_option_value_for_child_key(config_key)
+                if option_value:
+                    child_widget = option_item.child_options.get(config_key)
             
             # 尝试方式3：config_key 是 child_name
             if not option_value:
@@ -324,9 +322,15 @@ class OptionFormWidget(QWidget):
                     # 如果移除 hidden 后只剩下 value 字段，直接使用 value
                     if len(actual_cfg) == 1 and "value" in actual_cfg:
                         actual_cfg = actual_cfg["value"]
-                    self._apply_single_child_config(option_item, option_value, actual_cfg)
+                    if child_widget:
+                        self._apply_child_widget_config(child_widget, actual_cfg)
+                    else:
+                        self._apply_single_child_config(option_item, option_value, actual_cfg)
                 else:
-                    self._apply_single_child_config(option_item, option_value, child_cfg)
+                    if child_widget:
+                        self._apply_child_widget_config(child_widget, child_cfg)
+                    else:
+                        self._apply_single_child_config(option_item, option_value, child_cfg)
             else:
                 logger.debug(
                     f"跳过无效的子选项配置: option_key={option_item.key}, config_key={config_key}"
