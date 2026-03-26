@@ -35,6 +35,7 @@ import shutil
 import sys
 import tarfile
 import zipfile
+import hashlib
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Literal, Optional, TYPE_CHECKING, cast
 from urllib.parse import unquote, urlparse
@@ -533,6 +534,47 @@ class BaseUpdate(QThread):
             shutil.copytree(src, dst, dirs_exist_ok=True)
             shutil.rmtree(src)
 
+    def _file_sha256(self, file_path: Path) -> str:
+        digest = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _apply_hotfix_by_diff(self, hotfix_root: Path, project_path: Path) -> tuple[int, int]:
+        """
+        按文件差异应用热更新：
+        - 相同文件跳过
+        - 新文件或内容变化文件才复制到目标目录
+        返回 (应用文件数, 跳过文件数)
+        """
+        applied_count = 0
+        skipped_count = 0
+
+        for src_file in hotfix_root.rglob("*"):
+            if not src_file.is_file():
+                continue
+
+            relative = src_file.relative_to(hotfix_root)
+            target_file = project_path / relative
+
+            should_apply = True
+            if target_file.exists() and target_file.is_file():
+                try:
+                    should_apply = self._file_sha256(src_file) != self._file_sha256(target_file)
+                except Exception as hash_err:
+                    logger.debug("[步骤5] 文件哈希比对失败，按需覆盖: %s -> %s", target_file, hash_err)
+                    should_apply = True
+
+            if should_apply:
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_file, target_file)
+                applied_count += 1
+            else:
+                skipped_count += 1
+
+        return applied_count, skipped_count
+
     def _write_update_metadata(
         self,
         download_dir: Path,
@@ -970,6 +1012,7 @@ class Update(BaseUpdate):
         *,
         check_only: bool = False,
         update_target: str = "resource",
+        resource_repo_override: str | None = None,
     ):
         """
         更新器核心对象。
@@ -987,6 +1030,7 @@ class Update(BaseUpdate):
             force_full_download: 是否强制完整下载
             check_only: 是否仅检查更新
             update_target: 更新目标，"software" 或 "resource"
+            resource_repo_override: 资源更新仓库覆盖地址（仅 resource 更新目标生效）
         """
         super().__init__()
         self.service_coordinator = service_coordinator
@@ -1011,6 +1055,10 @@ class Update(BaseUpdate):
             "resource_github",
             self.interface.get("github", self.interface.get("url", "")),
         )
+        if self.update_target == "resource" and isinstance(resource_repo_override, str):
+            override = resource_repo_override.strip()
+            if override:
+                self.resource_url = override
         self.url = self.software_url if self.update_target == "software" else self.resource_url
         self.current_res_id = (
             "" if self.update_target == "software" else self.interface.get("mirrorchyan_rid", "")
@@ -1331,6 +1379,9 @@ class Update(BaseUpdate):
                 else None
             )
 
+            if self.force_full_download and self.update_target == "resource":
+                hotfix = False
+
             if not download_url:
                 if update_info is False:
                     logger.info("[步骤1] 当前已是最新版本，无需下载")
@@ -1463,9 +1514,15 @@ class Update(BaseUpdate):
                 )
 
             logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-            # 允许目标目录已存在（Python 3.8+ 支持 dirs_exist_ok）
-            # 这样在 bundle 目录本身已存在时不会因 WinError 183 直接失败
-            shutil.copytree(hotfix_root, project_path, dirs_exist_ok=True)
+            applied_count, skipped_count = self._apply_hotfix_by_diff(
+                hotfix_root,
+                project_path,
+            )
+            logger.info(
+                "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
+                applied_count,
+                skipped_count,
+            )
 
             interface_path = [
                 bundle_path_obj / "interface.jsonc",
@@ -1748,6 +1805,7 @@ class Update(BaseUpdate):
                 github_result.get("assets", []) or [],
                 target_version,
                 prefer_incremental=not self.force_full_download,
+                full_only=(self.force_full_download and self.update_target == "resource"),
             )
         else:
             download_asset = self._select_github_asset_by_keywords(
@@ -1844,6 +1902,7 @@ class Update(BaseUpdate):
         target_version: str,
         *,
         prefer_incremental: bool,
+        full_only: bool = False,
     ) -> tuple[dict | None, str]:
         """为资源更新选择 GitHub 资产（高层增量：hotfix 优先，全量兜底）。"""
         normalized_assets = assets if isinstance(assets, list) else []
@@ -1892,6 +1951,11 @@ class Update(BaseUpdate):
 
         incremental_best = _pick_best(incremental_candidates)
         full_best = _pick_best(full_candidates)
+
+        if full_only:
+            if full_best:
+                return full_best, "full"
+            return None, "full"
 
         if prefer_incremental and incremental_best:
             return incremental_best, "incremental"
@@ -2369,9 +2433,15 @@ class MultiResourceUpdate(Update):
                 )
 
             logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-            # 允许目标目录已存在（Python 3.8+ 支持 dirs_exist_ok）
-            # 这样在 bundle 目录本身已存在时不会因 WinError 183 直接失败
-            shutil.copytree(hotfix_root, project_path, dirs_exist_ok=True)
+            applied_count, skipped_count = self._apply_hotfix_by_diff(
+                hotfix_root,
+                project_path,
+            )
+            logger.info(
+                "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
+                applied_count,
+                skipped_count,
+            )
 
             interface_path = [
                 bundle_path_obj / "interface.jsonc",

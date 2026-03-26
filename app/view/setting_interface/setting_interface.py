@@ -3025,6 +3025,7 @@ class SettingInterface(QWidget):
             interface=interface,
             force_full_download=True,
             update_target="resource",
+            resource_repo_override="https://github.com/quartawa/mah_res",
         )
         self._updater.start()
 
