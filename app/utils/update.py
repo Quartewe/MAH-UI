@@ -1399,24 +1399,31 @@ class Update(BaseUpdate):
             if self.force_full_download:
                 logger.info("[步骤2] 强制下载模式，跳过 update_flag/hotfix 检查")
             elif download_source == "github" and self.update_target == "software":
-                logger.info("[步骤2] 开始判断Github热更新支持...")
-                update_flag_url = self._form_github_url(
-                    self.url, "update_flag", str(self.latest_update_version)
-                )
-                if not update_flag_url:
-                    logger.info("[步骤2] 无法获取 update_flag URL，跳过热更新")
-                    return self._stop_with_notice(2)
-
-                logger.debug("[步骤2] update_flag URL: %s", update_flag_url)
-
-                # 获取更新标志位判断是否可以热更新
-                hotfix = self.check_for_hotfix(update_flag_url)
-                logger.info("[步骤2]热更新支持: %s", hotfix)
-                if hotfix and download_source == "github":
-                    download_url = self._form_github_url(
-                        self.url, "hotfix", str(self.latest_update_version)
+                # 打包版禁用 software 热更新 zipball：zipball 是源码快照，会破坏已打包运行时。
+                if getattr(sys, "frozen", False):
+                    hotfix = False
+                    logger.info(
+                        "[步骤2] 当前为打包环境，禁用 GitHub 软件热更新，使用重启全量更新流程"
                     )
-                    logger.info("[步骤2] 热更新支持，更换下载地址: %s", download_url)
+                else:
+                    logger.info("[步骤2] 开始判断Github热更新支持...")
+                    update_flag_url = self._form_github_url(
+                        self.url, "update_flag", str(self.latest_update_version)
+                    )
+                    if not update_flag_url:
+                        logger.info("[步骤2] 无法获取 update_flag URL，跳过热更新")
+                        return self._stop_with_notice(2)
+
+                    logger.debug("[步骤2] update_flag URL: %s", update_flag_url)
+
+                    # 获取更新标志位判断是否可以热更新
+                    hotfix = self.check_for_hotfix(update_flag_url)
+                    logger.info("[步骤2]热更新支持: %s", hotfix)
+                    if hotfix and download_source == "github":
+                        download_url = self._form_github_url(
+                            self.url, "hotfix", str(self.latest_update_version)
+                        )
+                        logger.info("[步骤2] 热更新支持，更换下载地址: %s", download_url)
 
             self._emit_info_bar("info", self.tr("Preparing to download update..."))
 

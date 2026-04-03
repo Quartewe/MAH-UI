@@ -742,6 +742,31 @@ class MaaFW(QObject):
         is_packed = getattr(sys, "frozen", False)
         encoding = "utf-8" if is_packed else "gbk"
 
+        runtime_env = os.environ.copy()
+        internal_dir = project_dir / "_internal"
+        if internal_dir.exists():
+            internal_str = str(internal_dir)
+
+            current_pythonpath = runtime_env.get("PYTHONPATH", "")
+            pythonpath_entries = (
+                current_pythonpath.split(os.pathsep) if current_pythonpath else []
+            )
+            if internal_str not in pythonpath_entries:
+                runtime_env["PYTHONPATH"] = (
+                    internal_str
+                    if not current_pythonpath
+                    else f"{internal_str}{os.pathsep}{current_pythonpath}"
+                )
+
+            current_path = runtime_env.get("PATH", "")
+            path_entries = current_path.split(os.pathsep) if current_path else []
+            if internal_str not in path_entries:
+                runtime_env["PATH"] = (
+                    internal_str
+                    if not current_path
+                    else f"{internal_str}{os.pathsep}{current_path}"
+                )
+
         popen_kwargs = {
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
@@ -749,6 +774,7 @@ class MaaFW(QObject):
             "encoding": encoding,
             "errors": "replace",
             "bufsize": 1,
+            "env": runtime_env,
         }
 
         if os.name == "nt":

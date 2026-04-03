@@ -1083,44 +1083,63 @@ def _get_bundle_path_from_metadata(metadata: dict) -> str | None:
     update_logger.debug(
         "[步骤4] 开始从 metadata 和 interface 配置中获取 bundle 路径..."
     )
-    # 尝试从 interface.json 中获取
-    repo_root = os.getcwd()
-    interface_paths = [
-        os.path.join(repo_root, "interface.json"),
-        os.path.join(repo_root, "interface.jsonc"),
-    ]
+    repo_root = Path(os.getcwd()).resolve()
+
+    def _add_candidate(candidates: list[Path], candidate: Path) -> None:
+        candidate = candidate.resolve()
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    # 1) 优先使用 metadata 显式路径
+    candidates: list[Path] = []
+    for key in ("bundle_path", "project_path", "target_path"):
+        raw_value = metadata.get(key) if isinstance(metadata, dict) else None
+        if not raw_value or not isinstance(raw_value, str):
+            continue
+        raw_path = Path(raw_value)
+        if not raw_path.is_absolute():
+            raw_path = repo_root / raw_path
+        _add_candidate(candidates, raw_path)
+
+    # 2) 从 interface 配置推断路径
+    interface_paths = [repo_root / "interface.jsonc", repo_root / "interface.json"]
+    has_interface_file = False
     for interface_path in interface_paths:
-        if os.path.exists(interface_path):
-            update_logger.debug(f"[步骤4] 找到 interface 文件: {interface_path}")
-            try:
-                with open(interface_path, "r", encoding="utf-8") as f:
-                    interface_data = json.load(f)
-                    # 假设 bundle 路径在当前目录或 bundle 目录下
-                    bundle_name = interface_data.get("name", "")
-                    if bundle_name:
-                        update_logger.debug(
-                            f"[步骤4] 从 interface 配置中获取到 bundle 名称: {bundle_name}"
-                        )
-                        bundle_paths = [
-                            os.path.join(repo_root, "bundle", bundle_name),
-                            os.path.join(repo_root, bundle_name),
-                        ]
-                        for bp in bundle_paths:
-                            if os.path.exists(bp):
-                                update_logger.debug(f"[步骤4] 找到 bundle 路径: {bp}")
-                                return bp
-                        update_logger.warning(
-                            f"[步骤4] bundle 名称存在但路径不存在: {bundle_paths}"
-                        )
-                    else:
-                        update_logger.warning(
-                            f"[步骤4] interface 配置中未找到 bundle 名称 (name 字段)"
-                        )
-            except Exception as exc:
-                update_logger.warning(
-                    f"[步骤4] 读取 interface 文件失败: {interface_path} -> {exc}"
-                )
-                pass
+        if not interface_path.exists():
+            continue
+        has_interface_file = True
+        update_logger.debug(f"[步骤4] 找到 interface 文件: {interface_path}")
+        interface_data = _read_config_file(str(interface_path))
+        if not interface_data:
+            update_logger.warning(f"[步骤4] interface 解析失败: {interface_path}")
+            continue
+
+        bundle_name = str(interface_data.get("name", "")).strip()
+        if bundle_name:
+            update_logger.debug(
+                f"[步骤4] 从 interface 配置中获取到 bundle 名称: {bundle_name}"
+            )
+            _add_candidate(candidates, repo_root / "bundle" / bundle_name)
+            _add_candidate(candidates, repo_root / bundle_name)
+
+        # 打包版常见场景：interface 与 resource 直接在程序根目录
+        _add_candidate(candidates, repo_root)
+
+    # 3) 无 interface 但在程序根目录有资源目录时，也视为可用 bundle 根目录
+    if not has_interface_file:
+        if (repo_root / "resource").exists() or (repo_root / "interface.json").exists():
+            _add_candidate(candidates, repo_root)
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            update_logger.debug(f"[步骤4] 找到 bundle 路径: {candidate}")
+            return str(candidate)
+
+    if candidates:
+        update_logger.warning(
+            "[步骤4] 已尝试以下 bundle 路径但均不存在: %s",
+            [str(p) for p in candidates],
+        )
     update_logger.warning("[步骤4] 未找到有效的 interface 配置文件或 bundle 路径")
     return None
 
