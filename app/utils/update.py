@@ -548,14 +548,33 @@ class BaseUpdate(QThread):
         - 新文件或内容变化文件才复制到目标目录
         返回 (应用文件数, 跳过文件数)
         """
+        return self._apply_hotfix_by_diff_with_protection(
+            hotfix_root,
+            project_path,
+            protected_dirs=None,
+        )
+
+    def _apply_hotfix_by_diff_with_protection(
+        self,
+        hotfix_root: Path,
+        project_path: Path,
+        protected_dirs: list[Path] | None,
+    ) -> tuple[int, int]:
+        """
+        按文件差异应用热更新，并可按相对路径保护目录不被覆盖。
+        """
         applied_count = 0
         skipped_count = 0
+        protected = [p for p in (protected_dirs or []) if p.parts]
 
         for src_file in hotfix_root.rglob("*"):
             if not src_file.is_file():
                 continue
 
             relative = src_file.relative_to(hotfix_root)
+            if protected and self._is_under_any(relative, protected):
+                skipped_count += 1
+                continue
             target_file = project_path / relative
 
             should_apply = True
@@ -575,6 +594,16 @@ class BaseUpdate(QThread):
 
         return applied_count, skipped_count
 
+    def _software_protected_dirs(self) -> list[Path]:
+        """
+        软件增量更新时保护由 mah_res 合并而来的目录，避免被覆盖。
+        """
+        return [
+            Path("resource/index"),
+            Path("resource/base/image/ar"),
+            Path("resource/base/image/character"),
+        ]
+
     def _write_update_metadata(
         self,
         download_dir: Path,
@@ -587,6 +616,7 @@ class BaseUpdate(QThread):
         data = {
             "source": source,
             "mode": mode,
+            "target": self.update_target,
             "version": str(version) if version else "",
             "package_name": package_name,
             "download_time": datetime.utcnow().isoformat() + "Z",
@@ -1399,11 +1429,13 @@ class Update(BaseUpdate):
             if self.force_full_download:
                 logger.info("[步骤2] 强制下载模式，跳过 update_flag/hotfix 检查")
             elif download_source == "github" and self.update_target == "software":
-                # 打包版禁用 software 热更新 zipball：zipball 是源码快照，会破坏已打包运行时。
-                if getattr(sys, "frozen", False):
+                # 先使用检查阶段挑选到的增量包；未命中增量包时才走旧的 update_flag 逻辑。
+                if hotfix:
+                    logger.info("[步骤2] 已匹配到软件增量包，跳过 update_flag 检查")
+                elif getattr(sys, "frozen", False):
                     hotfix = False
                     logger.info(
-                        "[步骤2] 当前为打包环境，禁用 GitHub 软件热更新，使用重启全量更新流程"
+                        "[步骤2] 当前为打包环境，未匹配到增量包，使用重启全量更新流程"
                     )
                 else:
                     logger.info("[步骤2] 开始判断Github热更新支持...")
@@ -1473,6 +1505,14 @@ class Update(BaseUpdate):
                 zip_file_path.name,
             )
 
+            if (
+                self.update_target == "software"
+                and hotfix
+                and getattr(sys, "frozen", False)
+            ):
+                logger.info("[步骤3] 打包环境的软件增量更新交由外部更新器执行，准备重启")
+                return self._stop_with_notice(2)
+
             if download_source == "mirror":
                 logger.info("[步骤3] 准备重启以进行镜像更新")
                 return self._stop_with_notice(2)
@@ -1521,9 +1561,18 @@ class Update(BaseUpdate):
                 )
 
             logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-            applied_count, skipped_count = self._apply_hotfix_by_diff(
+            protected_dirs: list[Path] | None = None
+            if self.update_target == "software":
+                protected_dirs = self._software_protected_dirs()
+                logger.info(
+                    "[步骤5] 软件增量更新保护目录: %s",
+                    [str(p) for p in protected_dirs],
+                )
+
+            applied_count, skipped_count = self._apply_hotfix_by_diff_with_protection(
                 hotfix_root,
                 project_path,
+                protected_dirs,
             )
             logger.info(
                 "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
@@ -1814,6 +1863,11 @@ class Update(BaseUpdate):
                 prefer_incremental=not self.force_full_download,
                 full_only=(self.force_full_download and self.update_target == "resource"),
             )
+        elif self.update_target == "software":
+            download_asset, update_type = self._select_software_github_asset(
+                github_result.get("assets", []) or [],
+                target_version,
+            )
         else:
             download_asset = self._select_github_asset_by_keywords(
                 github_result.get("assets", []) or [], target_version
@@ -1970,6 +2024,70 @@ class Update(BaseUpdate):
             return full_best, "full"
         if incremental_best:
             return incremental_best, "incremental"
+        return None, "full"
+
+    def _select_software_github_asset(
+        self,
+        assets: Any,
+        target_version: str,
+    ) -> tuple[dict | None, str]:
+        """
+        为软件更新优先选择增量包（incremental/hotfix/patch），未命中则回退全量包。
+        """
+        normalized_assets = assets if isinstance(assets, list) else []
+        incremental_keywords = ("incremental", "hotfix", "patch")
+
+        tokens = [
+            str(self.project_name or "").lower(),
+            str(self.current_os_type or "").lower(),
+            str(self.current_arch or "").lower(),
+            str(target_version or "").lower(),
+            str(target_version or "").lstrip("vV").lower(),
+        ]
+        tokens = [token for token in tokens if token]
+
+        def _is_archive(name: str) -> bool:
+            lowered = name.lower()
+            return lowered.endswith(".zip") or lowered.endswith(".tar.gz")
+
+        def _score(name: str) -> int:
+            lowered = name.lower()
+            return sum(1 for token in tokens if token in lowered)
+
+        incremental_candidates: list[dict] = []
+        full_candidates: list[dict] = []
+
+        for asset in normalized_assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_name = asset.get("name")
+            if not isinstance(asset_name, str) or not _is_archive(asset_name):
+                continue
+
+            lowered = asset_name.lower()
+            if any(keyword in lowered for keyword in incremental_keywords):
+                incremental_candidates.append(asset)
+            else:
+                full_candidates.append(asset)
+
+        def _pick_best(candidates: list[dict]) -> dict | None:
+            if not candidates:
+                return None
+            return sorted(
+                candidates,
+                key=lambda item: (
+                    -_score(str(item.get("name", ""))),
+                    len(str(item.get("name", ""))),
+                ),
+            )[0]
+
+        incremental_best = _pick_best(incremental_candidates)
+        full_best = _pick_best(full_candidates)
+
+        if incremental_best:
+            return incremental_best, "incremental"
+        if full_best:
+            return full_best, "full"
         return None, "full"
 
     def check_ui_update(self, fetch_download_url: bool = True) -> dict | bool:

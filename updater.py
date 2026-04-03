@@ -1356,6 +1356,77 @@ def _strip_pipeline_dirs_from_hotfix(
     return removed_count
 
 
+def _file_sha256(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_under_any(relative: Path, parents: list[Path]) -> bool:
+    for parent in parents:
+        if len(parent.parts) > len(relative.parts):
+            continue
+        if relative.parts[: len(parent.parts)] == parent.parts:
+            return True
+    return False
+
+
+def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
+    """
+    软件增量更新时保护由 mah_res 合并而来的目录，避免被覆盖。
+    """
+    target = str((metadata or {}).get("target", "")).strip().lower()
+    if target != "software":
+        return []
+    return [
+        Path("resource/index"),
+        Path("resource/base/image/ar"),
+        Path("resource/base/image/character"),
+    ]
+
+
+def _apply_hotfix_by_diff(
+    hotfix_root: Path,
+    project_path: Path,
+    protected_dirs: list[Path] | None,
+) -> tuple[int, int]:
+    applied_count = 0
+    skipped_count = 0
+    protected = [p for p in (protected_dirs or []) if p.parts]
+
+    for src_file in hotfix_root.rglob("*"):
+        if not src_file.is_file():
+            continue
+
+        relative = src_file.relative_to(hotfix_root)
+        if protected and _is_under_any(relative, protected):
+            skipped_count += 1
+            continue
+
+        target_file = project_path / relative
+
+        should_apply = True
+        if target_file.exists() and target_file.is_file():
+            try:
+                should_apply = _file_sha256(src_file) != _file_sha256(target_file)
+            except Exception as hash_err:
+                update_logger.debug(
+                    f"[步骤5] 文件哈希比对失败，按需覆盖: {target_file} -> {hash_err}"
+                )
+                should_apply = True
+
+        if should_apply:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, target_file)
+            applied_count += 1
+        else:
+            skipped_count += 1
+
+    return applied_count, skipped_count
+
+
 def _update_interface_version(interface_paths: list[Path], version: str) -> bool:
     update_logger.info(f"[步骤5] 开始更新 interface 配置文件中的版本号为: {version}")
     for path in interface_paths:
@@ -1498,11 +1569,24 @@ def apply_github_hotfix(package_path, metadata=None):
                 f"[步骤5] 已保护本地 pipeline，热更包中共移除 {removed_pipeline_dirs} 个 pipeline 目录"
             )
 
-        update_logger.info(f"[步骤5] 开始覆盖项目目录: {hotfix_root} -> {project_path}")
-        # 允许目标目录已存在（Python 3.8+ 支持 dirs_exist_ok）
-        # 这样在 bundle 目录本身已存在时不会因 WinError 183 直接失败
-        shutil.copytree(hotfix_root, project_path, dirs_exist_ok=True)
-        update_logger.info(f"[步骤5] 项目目录覆盖完成: {project_path}")
+        protected_dirs = _software_protected_dirs_from_metadata(metadata)
+        if protected_dirs:
+            update_logger.info(
+                "[步骤5] 软件增量更新保护目录: %s",
+                [str(p) for p in protected_dirs],
+            )
+
+        update_logger.info(f"[步骤5] 开始差异覆盖项目目录: {hotfix_root} -> {project_path}")
+        applied_count, skipped_count = _apply_hotfix_by_diff(
+            Path(hotfix_root),
+            project_path,
+            protected_dirs,
+        )
+        update_logger.info(
+            "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个文件",
+            applied_count,
+            skipped_count,
+        )
 
         if _update_interface_version(interface_paths, version):
             update_logger.info("[步骤5] interface 配置同步完毕")
