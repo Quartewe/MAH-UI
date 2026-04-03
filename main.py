@@ -28,6 +28,7 @@ import argparse
 import atexit
 import hashlib
 import tempfile
+import shutil
 
 
 # 设置工作目录为运行方式位置
@@ -36,6 +37,33 @@ if getattr(sys, "frozen", False):
     os.environ["MAAFW_BINARY_PATH"] = os.getcwd()
 else:
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _migrate_ui_plugins_early() -> None:
+    """在 MaaFW 初始化前迁移 UI 插件，避免与原生 plugins 混用。"""
+    cwd = Path(os.getcwd())
+    target_dir = cwd / "app" / "plugins"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    for legacy_dir in (cwd / "plugins", cwd / "ui_plugins"):
+        if not legacy_dir.is_dir():
+            continue
+        for file_path in legacy_dir.glob("*.py"):
+            if not file_path.is_file() or file_path.name.startswith("_"):
+                continue
+            target_path = target_dir / file_path.name
+            if target_path.exists():
+                continue
+            try:
+                shutil.move(str(file_path), str(target_path))
+            except Exception:
+                # 启动早期不阻断主流程，失败会在主窗口阶段再次尝试迁移并记录日志。
+                pass
+
+
+from pathlib import Path
+
+_migrate_ui_plugins_early()
 
 
 from app.utils.logger import logger
@@ -154,7 +182,6 @@ if __name__ == "__main__":
     logger.info(f"当前工作目录: {os.getcwd()}")
 
     import faulthandler
-    from pathlib import Path
 
     log_dir = Path("debug")
     log_dir.mkdir(exist_ok=True)

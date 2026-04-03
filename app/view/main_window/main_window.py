@@ -1322,9 +1322,33 @@ class MainWindow(MSFluentWindow):
             json.dumps(self._plugin_enabled_overrides, ensure_ascii=False),
         )
 
+    def _resolve_ui_plugin_dir(self) -> Path:
+        """解析 UI 插件目录，并迁移旧目录中的 .py 插件文件。"""
+        cwd = Path.cwd()
+        target_dir = cwd / "app" / "plugins"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        legacy_dirs = [cwd / "plugins", cwd / "ui_plugins"]
+        for legacy_dir in legacy_dirs:
+            if not legacy_dir.is_dir():
+                continue
+            for file_path in legacy_dir.glob("*.py"):
+                if not file_path.is_file() or file_path.name.startswith("_"):
+                    continue
+                target_path = target_dir / file_path.name
+                if target_path.exists():
+                    continue
+                try:
+                    shutil.move(str(file_path), str(target_path))
+                    logger.info("已迁移 UI 插件文件: %s -> %s", file_path, target_path)
+                except Exception as exc:
+                    logger.warning("迁移 UI 插件文件失败 %s: %s", file_path, exc)
+
+        return target_dir
+
     def _initialize_plugins(self) -> None:
         """初始化插件管理器并加载插件目录。"""
-        plugin_dir = Path.cwd() / "plugins"
+        plugin_dir = self._resolve_ui_plugin_dir()
         ctx = PluginContext(
             logger=logger,
             signal_bus=signalBus,

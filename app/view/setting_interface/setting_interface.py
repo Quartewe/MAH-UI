@@ -1626,11 +1626,20 @@ class SettingInterface(QWidget):
 
     def _on_import_plugin_clicked(self):
         """从实验性功能导入插件文件。"""
+        cwd = Path.cwd()
+        candidate_dirs = [
+            cwd / "app" / "plugins",
+            cwd / "ui_plugins",
+            cwd / "plugins",
+            Path.home(),
+        ]
+        default_dir = next((d for d in candidate_dirs if d.exists()), Path.home())
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             self.tr("Select plugin file"),
-            str(Path.home()),
-            self.tr("Python Files (*.py)"),
+            str(default_dir),
+            self.tr("Python Files (*.py);;All Files (*)"),
         )
         if not path:
             return

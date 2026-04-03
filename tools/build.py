@@ -200,14 +200,31 @@ if os.path.isfile(ui_icon_src):
 else:
     print(f"[WARN] UI icon not found, skipping copy: {ui_icon_src}")
 
-# 复制插件目录（若存在）
-plugins_dir = os.path.join(os.getcwd(), "plugins")
-dist_plugins_dir = os.path.join(os.getcwd(), "dist", "MAH", "plugins")
-if os.path.isdir(plugins_dir):
-    shutil.copytree(plugins_dir, dist_plugins_dir, dirs_exist_ok=True)
-    print(f"[INFO] Plugins copied to: {dist_plugins_dir}")
-else:
-    print(f"[WARN] Plugins directory not found, skipping: {plugins_dir}")
+# 复制 UI 插件到 app/plugins（仅 .py），避免与 MaaFW 原生 plugins 目录冲突
+source_plugin_dirs = [
+    os.path.join(os.getcwd(), "app", "plugins"),
+    os.path.join(os.getcwd(), "plugins"),
+]
+dist_ui_plugins_dir = os.path.join(os.getcwd(), "dist", "MAH", "app", "plugins")
+os.makedirs(dist_ui_plugins_dir, exist_ok=True)
+
+copied_plugins = set()
+copied_count = 0
+for source_dir in source_plugin_dirs:
+    if not os.path.isdir(source_dir):
+        continue
+    for name in os.listdir(source_dir):
+        if not name.endswith(".py") or name.startswith("_") or name in copied_plugins:
+            continue
+        src_file = os.path.join(source_dir, name)
+        if not os.path.isfile(src_file):
+            continue
+        dst_file = os.path.join(dist_ui_plugins_dir, name)
+        shutil.copy2(src_file, dst_file)
+        copied_plugins.add(name)
+        copied_count += 1
+
+print(f"[INFO] UI plugins copied to: {dist_ui_plugins_dir}, count={copied_count}")
 
 os.makedirs(os.path.join(os.getcwd(), "dist", "MAH", "app", "i18n"), exist_ok=True)
 # 复制i18n文件
