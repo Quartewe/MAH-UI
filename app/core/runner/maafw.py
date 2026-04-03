@@ -15,6 +15,7 @@ from enum import Enum
 from typing import List, Dict
 import subprocess
 import threading
+import time
 from pathlib import Path
 import numpy
 from asyncify import asyncify
@@ -788,6 +789,14 @@ class MaaFW(QObject):
             agent_process = subprocess.Popen(start_cmd, **popen_kwargs)
             self.agent_thread = agent_process
             self._watch_agent_output(agent_process)
+
+            # 早期退出通常意味着解释器/依赖缺失，先记录返回码再尝试 connect。
+            time.sleep(0.2)
+            early_code = agent_process.poll()
+            if early_code is not None:
+                logger.error(f"agent 进程启动后立即退出，returncode={early_code}")
+                self._send_custom_info(MaaFWError.AGENT_START_FAILED)
+                return False
         except Exception as e:
             logger.error(f"启动agent失败: {e}")
             self._send_custom_info(MaaFWError.AGENT_START_FAILED)
@@ -893,6 +902,7 @@ class MaaFW(QObject):
             for line in stream:
                 text = line.rstrip("\r\n")
                 if text:
+                    logger.debug(f"[agent] {text}")
                     self.agent_info.emit(text)
             stream.close()
 
