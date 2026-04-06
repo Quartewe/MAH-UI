@@ -2276,11 +2276,29 @@ class Update(BaseUpdate):
                 result_data["release_note"] = self.release_note
             return result_data
 
+        raw_assets = github_result.get("assets", []) or []
+        filtered_assets = []
+        for asset in raw_assets if isinstance(raw_assets, list) else []:
+            if not isinstance(asset, dict):
+                continue
+            asset_name = str(asset.get("name", "")).lower()
+            # 跳过 GitHub 自动附带的源码压缩包，避免误选导致更新器无法替换运行时文件
+            if "source code" in asset_name:
+                continue
+            filtered_assets.append(asset)
+
         download_asset = self._select_github_asset_by_keywords(
-            github_result.get("assets", []) or [],
+            filtered_assets,
             target_version,
             primary_name=ui_name,
         )
+        if not download_asset:
+            # 兼容老发行中命名不规范的资产，回退到完整资产列表再尝试一次
+            download_asset = self._select_github_asset_by_keywords(
+                raw_assets,
+                target_version,
+                primary_name=ui_name,
+            )
         if not download_asset:
             logger.warning("  [检查更新] GitHub: 未找到下载地址")
             return False
@@ -2301,10 +2319,19 @@ class Update(BaseUpdate):
         self._emit_info_bar(
             "info", self.tr("Found update: ") + str(self.latest_update_version)
         )
+
+        selected_asset_name = str(download_asset.get("name", "")).lower()
+        update_type = (
+            "incremental"
+            if any(k in selected_asset_name for k in ("incremental", "hotfix", "patch"))
+            else "full"
+        )
+
         result_data = {
             "url": download_url,
             "source": "github",
             "version": self.latest_update_version,
+            "update_type": update_type,
         }
         if self.release_note:
             result_data["release_note"] = self.release_note

@@ -33,6 +33,7 @@ MFW-ChainFlow Assistant 主界面
 import asyncio
 import hashlib
 import json
+import re
 import shutil
 import sys
 import threading
@@ -3070,11 +3071,29 @@ class MainWindow(MSFluentWindow):
     def set_title(self):
         """设置窗口标题"""
         meta = self.service_coordinator.task.interface or {}
-        base_title = (
-            meta.get("title", "")
-            or meta.get("custom_title", "")
-            or f"{meta.get('name', '')} {meta.get('version', '')}".strip()
-        )
+        resource_name = str(meta.get("name", "") or "").strip()
+        resource_version = str(meta.get("version", "") or "").strip()
+        title_template = str(
+            meta.get("title", "") or meta.get("custom_title", "") or ""
+        ).strip()
+
+        if title_template:
+            base_title = title_template
+            if resource_version:
+                # 兼容历史标题写死版本号的情况，例如 "MAH v1.0.0"。
+                version_pattern = re.compile(
+                    r"v?\d+(?:\.\d+){1,3}(?:[-._][0-9A-Za-z]+)*",
+                    re.IGNORECASE,
+                )
+                matched = version_pattern.search(title_template)
+                if matched:
+                    old_version = matched.group(0)
+                    if old_version.lower() != resource_version.lower():
+                        base_title = (
+                            f"{title_template[:matched.start()]}{resource_version}{title_template[matched.end():]}"
+                        ).strip()
+        else:
+            base_title = f"{resource_name} {resource_version}".strip()
 
         if cfg.get(cfg.multi_resource_adaptation):
             from app.common.__version__ import __version__
@@ -3308,7 +3327,9 @@ class MainWindow(MSFluentWindow):
                 "MFWUpdater",
                 "MFWUpdater1",
                 "MAHUpdater.exe",
+                "MAHUpdater1.exe",
                 "MAHUpdater",
+                "MAHUpdater1",
             }
 
             current = psutil.Process(os.getpid())

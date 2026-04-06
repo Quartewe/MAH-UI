@@ -127,8 +127,14 @@ FULL_UPDATE_EXCLUDES = [
     "release_notes",
     "debug",
     "update",
+    "MFWUpdater.exe",
+    "MFWUpdater",
     "MFWUpdater1.exe",
     "MFWUpdater1",
+    "MAHUpdater.exe",
+    "MAHUpdater",
+    "MAHUpdater1.exe",
+    "MAHUpdater1",
 ]
 
 
@@ -458,13 +464,23 @@ def extract_zip_file_with_validation(update_file_path):
 
 def start_mfw_process():
     try:
-        if sys.platform.startswith("win32"):
-            cmd = [".\\MFW.exe"]
+        cmd: list[str] = []
+
+        # 优先使用主程序透传路径，确保名称/位置变更后仍可重启。
+        if RUNTIME_OPTS.mfw_exe_path:
+            cmd = [str(Path(RUNTIME_OPTS.mfw_exe_path))]
+        elif sys.platform.startswith("win32"):
+            candidates = [Path("./MFW.exe"), Path("./MAH.exe")]
+            selected = next((path for path in candidates if path.exists()), candidates[0])
+            cmd = [str(selected)]
         elif sys.platform.startswith(("darwin", "linux")):
-            cmd = ["./MFW"]
+            candidates = [Path("./MFW"), Path("./MAH")]
+            selected = next((path for path in candidates if path.exists()), candidates[0])
+            cmd = [str(selected)]
         else:
             update_logger.error("不支持的操作系统")
             return
+
         if DIRECT_RUN_EXTRA_ARGS:
             cmd.extend(DIRECT_RUN_EXTRA_ARGS)
         update_logger.info("重启/启动 MFW 进程: %s", " ".join(cmd))
@@ -757,6 +773,29 @@ def safe_delete_all_except(exclude_relatives):
     return SafeDeleteResult(True, backups, backup_dir)
 
 
+def _pick_extract_source_root(temp_dir: Path) -> Path:
+    """识别更新包真实根目录，自动剥离常见的外层打包目录。"""
+    ignored_names = {"__MACOSX", ".DS_Store"}
+    current_root = temp_dir
+
+    # 只做有限层数剥离，避免误判导致路径跳转过深。
+    for _ in range(2):
+        entries = [
+            entry
+            for entry in current_root.iterdir()
+            if entry.name not in ignored_names
+        ]
+        if len(entries) == 1 and entries[0].is_dir():
+            current_root = entries[0]
+            continue
+        break
+
+    if current_root != temp_dir:
+        update_logger.info("[解压] 检测到外层包装目录，实际覆盖根目录: %s", current_root)
+
+    return current_root
+
+
 def _extract_zip_to_temp(zip_path: Path):
     import zipfile
 
@@ -767,8 +806,9 @@ def _extract_zip_to_temp(zip_path: Path):
             total_files = len(file_list)
             print(f"[解压] 找到 {total_files} 个文件需要解压到临时目录")
             update_logger.info(f"[解压] 找到 {total_files} 个文件需要解压到临时目录")
-            
+
             extracted_count = 0
+            failed_files: list[tuple[str, str]] = []
             for idx, file_info in enumerate(file_list, 1):
                 try:
                     print(f"[解压] [{idx}/{total_files}] 正在解压: {file_info}")
@@ -780,13 +820,21 @@ def _extract_zip_to_temp(zip_path: Path):
                     error_msg = f"解压文件 {file_info} 失败: {exc}"
                     print(f"[解压] ✗ 错误: {error_msg}")
                     update_logger.error(f"[解压] {error_msg}")
-                    print(f"[解压] 等待5秒后继续...")
-                    for sec in range(5, 0, -1):
-                        print(f"  {sec}秒后继续...")
-                        time.sleep(1)
-                    # 继续处理下一个文件
-                    continue
-            
+                    failed_files.append((file_info, str(exc)))
+
+            if failed_files:
+                sample_files = ", ".join(name for name, _ in failed_files[:5])
+                update_logger.error(
+                    "[解压] 解压失败，共 %s 个文件解压失败，示例: %s",
+                    len(failed_files),
+                    sample_files,
+                )
+                print(
+                    f"[解压] ✗ 解压失败，共 {len(failed_files)} 个文件解压失败，示例: {sample_files}"
+                )
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None
+
             print(f"[解压] 解压完成，共成功解压 {extracted_count}/{total_files} 个文件")
             update_logger.info(f"[解压] 解压完成，共成功解压 {extracted_count}/{total_files} 个文件")
         return temp_dir
@@ -794,10 +842,6 @@ def _extract_zip_to_temp(zip_path: Path):
         error_msg = f"解压更新包到临时目录失败: {exc}"
         print(f"[解压] ✗ 严重错误: {error_msg}")
         update_logger.error(error_msg)
-        print(f"[解压] 等待5秒后继续...")
-        for sec in range(5, 0, -1):
-            print(f"  {sec}秒后继续...")
-            time.sleep(1)
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None
 
@@ -867,7 +911,9 @@ def perform_full_update(package_path: str, metadata_path: str, metadata: dict) -
         return False
 
     try:
-        _copy_temp_to_root(temp_dir)
+        source_root = _pick_extract_source_root(temp_dir)
+        update_logger.info("[步骤4] 开始覆盖文件: %s -> %s", source_root, os.getcwd())
+        _copy_temp_to_root(source_root)
     except Exception as exc:
         update_logger.error(f"覆盖目录失败: {exc}")
         _handle_full_update_failure(
@@ -1215,8 +1261,9 @@ def _extract_zip_to_hotfix_dir(zip_path: str, extract_to: str) -> str | None:
             update_logger.info("[步骤3] 开始解压文件...")
             print("[解压] 开始解压文件...")
             extracted_count = 0
+            failed_members: list[tuple[str, str]] = []
             total_to_extract = len([m for m in members if (not interface_dir_parts or tuple(Path(m.replace("\\", "/")).parts[:len(interface_dir_parts) if interface_dir_parts else 0]) == interface_dir_parts) and m.strip()])
-            
+
             for idx, member in enumerate(members, 1):
                 member_path = Path(member.replace("\\", "/"))
                 member_parts = tuple(p for p in member_path.parts if p and p != ".")
@@ -1251,12 +1298,19 @@ def _extract_zip_to_hotfix_dir(zip_path: str, extract_to: str) -> str | None:
                     error_msg = f"解压文件 {member} 失败: {exc}"
                     print(f"[解压] ✗ 错误: {error_msg}")
                     update_logger.error(f"[步骤3] {error_msg}")
-                    print(f"[解压] 等待5秒后继续...")
-                    for sec in range(5, 0, -1):
-                        print(f"  {sec}秒后继续...")
-                        time.sleep(1)
-                    # 继续处理下一个文件
-                    continue
+                    failed_members.append((member, str(exc)))
+
+            if failed_members:
+                sample_members = ", ".join(name for name, _ in failed_members[:5])
+                update_logger.error(
+                    "[步骤3] 解压中断，共 %s 个文件失败，示例: %s",
+                    len(failed_members),
+                    sample_members,
+                )
+                print(
+                    f"[解压] ✗ 解压失败，共 {len(failed_members)} 个文件失败，示例: {sample_members}"
+                )
+                return None
 
             update_logger.info(f"[步骤3] 文件解压完成，共解压 {extracted_count} 个文件")
             print(f"[解压] 文件解压完成，共解压 {extracted_count} 个文件")
@@ -1267,10 +1321,6 @@ def _extract_zip_to_hotfix_dir(zip_path: str, extract_to: str) -> str | None:
         error_msg = f"解压文件失败 {zip_path} -> {extract_to}: {exc}"
         print(f"[解压] ✗ 严重错误: {error_msg}")
         update_logger.exception(f"[步骤3] {error_msg}")
-        print(f"[解压] 等待5秒后继续...")
-        for sec in range(5, 0, -1):
-            print(f"  {sec}秒后继续...")
-            time.sleep(1)
         return None
 
 
