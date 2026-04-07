@@ -331,12 +331,30 @@ def launch_updater_process(*extra_args: str) -> None:
             time.sleep(0.1)
         return True, None
 
+    def _windows_creation_flags() -> int:
+        """
+        让更新器尽量脱离父进程作业对象，避免主程序退出时被连带终止。
+        """
+        if not sys.platform.startswith("win32"):
+            return 0
+        flags = 0
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+        return flags
+
     def _try_spawn(cmd: list[str], label: str, cwd: str | None = None) -> bool:
         command_line = subprocess.list2cmdline(cmd)
         logger.info("尝试启动更新程序(%s): %s", label, command_line)
         attempted_targets.append(label)
         try:
-            proc = subprocess.Popen(cmd, cwd=cwd)
+            popen_kwargs: dict[str, Any] = {}
+            if cwd:
+                popen_kwargs["cwd"] = cwd
+            creation_flags = _windows_creation_flags()
+            if creation_flags:
+                popen_kwargs["creationflags"] = creation_flags
+            proc = subprocess.Popen(cmd, **popen_kwargs)
         except Exception as exc:
             logger.warning("启动更新程序失败(%s): %s", label, exc)
             return False
