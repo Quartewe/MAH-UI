@@ -318,7 +318,16 @@ def launch_updater_process(*extra_args: str) -> None:
         logger.debug("构造更新器父进程参数失败（将继续尝试启动更新器）: %s", exc)
 
     if sys.platform.startswith("win32"):
-        updater_executable = Path("./MFWUpdater1.exe")
+        updater_candidates = [
+            Path("./MFWUpdater1.exe"),
+            Path("./MAHUpdater1.exe"),
+            Path("./MFWUpdater.exe"),
+            Path("./MAHUpdater.exe"),
+        ]
+        updater_executable = next(
+            (candidate for candidate in updater_candidates if candidate.exists()),
+            updater_candidates[0],
+        )
         resolved_executable = updater_executable.resolve(strict=False)
         args = (
             ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
@@ -333,7 +342,16 @@ def launch_updater_process(*extra_args: str) -> None:
         logger.info("启动更新程序: %s", command_line)
         cmd = [str(resolved_executable)] + args
     elif sys.platform.startswith(("darwin", "linux")):
-        updater_executable = Path("./MFWUpdater1")
+        updater_candidates = [
+            Path("./MFWUpdater1"),
+            Path("./MAHUpdater1"),
+            Path("./MFWUpdater"),
+            Path("./MAHUpdater"),
+        ]
+        updater_executable = next(
+            (candidate for candidate in updater_candidates if candidate.exists()),
+            updater_candidates[0],
+        )
         resolved_executable = updater_executable.resolve(strict=False)
         args = (
             ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
@@ -3100,8 +3118,10 @@ class SettingInterface(QWidget):
         try:
             if sys.platform.startswith("win32"):
                 self._rename_updater("MFWUpdater.exe", "MFWUpdater1.exe")
+                self._rename_updater("MAHUpdater.exe", "MAHUpdater1.exe")
             elif sys.platform.startswith("darwin") or sys.platform.startswith("linux"):
                 self._rename_updater("MFWUpdater", "MFWUpdater1")
+                self._rename_updater("MAHUpdater", "MAHUpdater1")
         except Exception as e:
             self._updater_started = False
             logger.error(f"重命名更新程序失败: {e}")
