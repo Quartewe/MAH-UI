@@ -293,6 +293,7 @@ def launch_updater_process(*extra_args: str) -> None:
     import sys
     import subprocess
     import os
+    import time
 
     extra_arg_list = list(extra_args)
     # 透传“父进程信息”，供更新器跨平台精确等待主程序完全退出
@@ -317,52 +318,141 @@ def launch_updater_process(*extra_args: str) -> None:
     except Exception as exc:
         logger.debug("构造更新器父进程参数失败（将继续尝试启动更新器）: %s", exc)
 
+    args = ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
+    startup_timeout = 1.5
+    attempted_targets: list[str] = []
+
+    def _wait_started(proc: subprocess.Popen, timeout: float) -> tuple[bool, int | None]:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            exit_code = proc.poll()
+            if exit_code is not None:
+                return False, exit_code
+            time.sleep(0.1)
+        return True, None
+
+    def _windows_creation_flags() -> int:
+        """
+        让更新器尽量脱离父进程作业对象，避免主程序退出时被连带终止。
+        """
+        if not sys.platform.startswith("win32"):
+            return 0
+        flags = 0
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+        return flags
+
+    def _try_spawn(cmd: list[str], label: str, cwd: str | None = None) -> bool:
+        command_line = subprocess.list2cmdline(cmd)
+        logger.info("尝试启动更新程序(%s): %s", label, command_line)
+        attempted_targets.append(label)
+        try:
+            popen_kwargs: dict[str, Any] = {}
+            if cwd:
+                popen_kwargs["cwd"] = cwd
+            creation_flags = _windows_creation_flags()
+            if creation_flags:
+                popen_kwargs["creationflags"] = creation_flags
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+        except Exception as exc:
+            logger.warning("启动更新程序失败(%s): %s", label, exc)
+            return False
+
+        started, exit_code = _wait_started(proc, startup_timeout)
+        if started:
+            logger.info("更新程序启动成功(%s)", label)
+            return True
+
+        logger.warning("更新程序启动后立即退出(%s), exit_code=%s", label, exit_code)
+        return False
+
     if sys.platform.startswith("win32"):
         updater_candidates = [
-            Path("./MFWUpdater1.exe"),
-            Path("./MAHUpdater1.exe"),
-            Path("./MFWUpdater.exe"),
             Path("./MAHUpdater.exe"),
+            Path("./MFWUpdater.exe"),
+            Path("./MAHUpdater1.exe"),
+            Path("./MFWUpdater1.exe"),
         ]
-        updater_executable = next(
-            (candidate for candidate in updater_candidates if candidate.exists()),
-            updater_candidates[0],
-        )
-        resolved_executable = updater_executable.resolve(strict=False)
-        args = (
-            ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
-        )
-        command_line = subprocess.list2cmdline([str(resolved_executable)] + args)
-        if _is_running_with_admin_privileges():
-            logger.info(
-                "主程序具有管理员权限，使用管理员方式启动更新程序: %s", command_line
-            )
-            _start_windows_process_with_admin(resolved_executable, args)
-            return
-        logger.info("启动更新程序: %s", command_line)
-        cmd = [str(resolved_executable)] + args
-    elif sys.platform.startswith(("darwin", "linux")):
-        updater_candidates = [
-            Path("./MFWUpdater1"),
-            Path("./MAHUpdater1"),
-            Path("./MFWUpdater"),
-            Path("./MAHUpdater"),
-        ]
-        updater_executable = next(
-            (candidate for candidate in updater_candidates if candidate.exists()),
-            updater_candidates[0],
-        )
-        resolved_executable = updater_executable.resolve(strict=False)
-        args = (
-            ["-update"] + parent_args + ["--shutdown-timeout", "180"] + extra_arg_list
-        )
-        command_line = subprocess.list2cmdline([str(resolved_executable)] + args)
-        logger.info("启动更新程序: %s", command_line)
-        cmd = [str(resolved_executable)] + args
-    else:
-        raise NotImplementedError("Unsupported platform")
 
-    subprocess.Popen(cmd)
+        for candidate in updater_candidates:
+            if not candidate.exists():
+                continue
+            resolved_executable = candidate.resolve(strict=False)
+            if _try_spawn(
+                [str(resolved_executable)] + args,
+                label=f"binary:{resolved_executable.name}",
+                cwd=str(resolved_executable.parent),
+            ):
+                return
+
+        script_path = Path("./updater.py")
+        python_candidates: list[Path] = []
+        if getattr(sys, "frozen", False):
+            python_candidates.extend(
+                [
+                    Path("./_internal/python.exe"),
+                    Path(sys.executable).with_name("python.exe"),
+                    Path("./python.exe"),
+                ]
+            )
+        else:
+            python_candidates.append(Path(sys.executable))
+
+        if script_path.exists():
+            for python_bin in python_candidates:
+                if not python_bin.exists():
+                    continue
+                resolved_python = python_bin.resolve(strict=False)
+                if _try_spawn(
+                    [
+                        str(resolved_python),
+                        str(script_path.resolve(strict=False)),
+                    ]
+                    + args,
+                    label=f"python:{resolved_python.name}",
+                    cwd=str(Path.cwd()),
+                ):
+                    return
+
+        raise RuntimeError(
+            "未能启动更新程序，已尝试: "
+            + (", ".join(attempted_targets) if attempted_targets else "无可用候选")
+        )
+
+    if sys.platform.startswith(("darwin", "linux")):
+        updater_candidates = [
+            Path("./MAHUpdater"),
+            Path("./MFWUpdater"),
+            Path("./MAHUpdater1"),
+            Path("./MFWUpdater1"),
+        ]
+
+        for candidate in updater_candidates:
+            if not candidate.exists():
+                continue
+            resolved_executable = candidate.resolve(strict=False)
+            if _try_spawn(
+                [str(resolved_executable)] + args,
+                label=f"binary:{resolved_executable.name}",
+                cwd=str(resolved_executable.parent),
+            ):
+                return
+
+        script_path = Path("./updater.py")
+        if script_path.exists() and _try_spawn(
+            [sys.executable, str(script_path.resolve(strict=False))] + args,
+            label="python:sys.executable",
+            cwd=str(Path.cwd()),
+        ):
+            return
+
+        raise RuntimeError(
+            "未能启动更新程序，已尝试: "
+            + (", ".join(attempted_targets) if attempted_targets else "无可用候选")
+        )
+
+    raise NotImplementedError("Unsupported platform")
 
 
 class SettingInterface(QWidget):

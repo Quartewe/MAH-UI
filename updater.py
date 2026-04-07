@@ -1387,14 +1387,45 @@ def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
     ]
 
 
+def _normalize_relative_protected_dirs(
+    protected_dirs: list[Path | str] | None,
+) -> list[Path]:
+    """
+    统一保护目录为相对 Path，兼容字符串输入，避免 `.parts` 类型异常。
+    """
+    normalized: list[Path] = []
+    for raw in protected_dirs or []:
+        if isinstance(raw, Path):
+            candidate = raw
+        elif isinstance(raw, str):
+            stripped = raw.strip().replace("\\", "/")
+            if not stripped:
+                continue
+            candidate = Path(stripped)
+        else:
+            update_logger.debug("[步骤5] 忽略非法保护目录类型: %s", type(raw).__name__)
+            continue
+
+        if candidate.is_absolute():
+            update_logger.debug("[步骤5] 忽略绝对保护目录（需相对路径）: %s", candidate)
+            continue
+
+        parts = tuple(part for part in candidate.parts if part and part != ".")
+        if not parts:
+            continue
+        normalized.append(Path(*parts))
+
+    return normalized
+
+
 def _apply_hotfix_by_diff(
     hotfix_root: Path,
     project_path: Path,
-    protected_dirs: list[Path] | None,
+    protected_dirs: list[Path | str] | None,
 ) -> tuple[int, int]:
     applied_count = 0
     skipped_count = 0
-    protected = [p for p in (protected_dirs or []) if p.parts]
+    protected = _normalize_relative_protected_dirs(protected_dirs)
 
     for src_file in hotfix_root.rglob("*"):
         if not src_file.is_file():

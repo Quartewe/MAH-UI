@@ -541,6 +541,36 @@ class BaseUpdate(QThread):
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def _normalize_relative_protected_dirs(
+        self, protected_dirs: list[Path | str] | None
+    ) -> list[Path]:
+        """
+        统一保护目录为相对 Path，兼容字符串输入，避免 `.parts` 类型异常。
+        """
+        normalized: list[Path] = []
+        for raw in protected_dirs or []:
+            if isinstance(raw, Path):
+                candidate = raw
+            elif isinstance(raw, str):
+                stripped = raw.strip().replace("\\", "/")
+                if not stripped:
+                    continue
+                candidate = Path(stripped)
+            else:
+                logger.debug("[步骤5] 忽略非法保护目录类型: %s", type(raw).__name__)
+                continue
+
+            if candidate.is_absolute():
+                logger.debug("[步骤5] 忽略绝对保护目录（需相对路径）: %s", candidate)
+                continue
+
+            parts = tuple(part for part in candidate.parts if part and part != ".")
+            if not parts:
+                continue
+            normalized.append(Path(*parts))
+
+        return normalized
+
     def _apply_hotfix_by_diff(self, hotfix_root: Path, project_path: Path) -> tuple[int, int]:
         """
         按文件差异应用热更新：
@@ -558,14 +588,14 @@ class BaseUpdate(QThread):
         self,
         hotfix_root: Path,
         project_path: Path,
-        protected_dirs: list[Path] | None,
+        protected_dirs: list[Path | str] | None,
     ) -> tuple[int, int]:
         """
         按文件差异应用热更新，并可按相对路径保护目录不被覆盖。
         """
         applied_count = 0
         skipped_count = 0
-        protected = [p for p in (protected_dirs or []) if p.parts]
+        protected = self._normalize_relative_protected_dirs(protected_dirs)
 
         for src_file in hotfix_root.rglob("*"):
             if not src_file.is_file():

@@ -3327,7 +3327,9 @@ class MainWindow(MSFluentWindow):
                 "MFWUpdater",
                 "MFWUpdater1",
                 "MAHUpdater.exe",
-                "MAHUpdater"
+                "MAHUpdater1.exe",
+                "MAHUpdater",
+                "MAHUpdater1",
             }
 
             current = psutil.Process(os.getpid())
@@ -3339,9 +3341,10 @@ class MainWindow(MSFluentWindow):
                 try:
                     name = (proc.name() or "").lower()
                     cmdline = " ".join(proc.cmdline()).lower()
+                    is_script_updater = "updater.py" in cmdline and "-update" in cmdline
                     if any(up.lower() in name for up in UPDATER_NAMES) or any(
                         up.lower() in cmdline for up in UPDATER_NAMES
-                    ):
+                    ) or is_script_updater:
                         logger.debug(
                             "检测到更新器进程，跳过终止: pid=%s, name=%s",
                             proc.pid,
