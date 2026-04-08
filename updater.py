@@ -127,6 +127,10 @@ FULL_UPDATE_EXCLUDES = [
     "release_notes",
     "debug",
     "update",
+    "MAHUpdater.exe",
+    "MAHUpdater",
+    "MAHUpdater1.exe",
+    "MAHUpdater1",
     "MFWUpdater1.exe",
     "MFWUpdater1",
 ]
@@ -1364,11 +1368,24 @@ def _file_sha256(file_path: Path) -> str:
     return digest.hexdigest()
 
 
-def _is_under_any(relative: Path, parents: list[Path]) -> bool:
+def _is_under_any(relative: Path | str, parents: list[Path | str]) -> bool:
+    if isinstance(relative, str):
+        relative = Path(relative.replace("\\", "/"))
+
+    relative_parts = tuple(part for part in relative.parts if part and part != ".")
+    if not relative_parts:
+        return False
+
     for parent in parents:
-        if len(parent.parts) > len(relative.parts):
+        if isinstance(parent, str):
+            parent = Path(parent.replace("\\", "/"))
+        parent_parts = tuple(part for part in parent.parts if part and part != ".")
+        if not parent_parts:
             continue
-        if relative.parts[: len(parent.parts)] == parent.parts:
+
+        if len(parent_parts) > len(relative_parts):
+            continue
+        if relative_parts[: len(parent_parts)] == parent_parts:
             return True
     return False
 
@@ -1943,6 +1960,7 @@ if __name__ == "__main__":
         # 捕获所有未处理的异常并记录
         error_message = f"更新程序发生未捕获的异常: {type(e).__name__}: {e}"
         update_logger.error(error_message)
+        update_logger.exception("未捕获异常堆栈:")
         print(f"\n{error_message}")
 
         input("按回车键退出... / Press Enter to exit...")

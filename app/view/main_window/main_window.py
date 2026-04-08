@@ -3337,6 +3337,7 @@ class MainWindow(MSFluentWindow):
             if not children:
                 return
             logger.debug("检测到 %d 个子进程，正在关闭", len(children))
+            terminate_targets = []
             for proc in children:
                 try:
                     name = (proc.name() or "").lower()
@@ -3352,9 +3353,14 @@ class MainWindow(MSFluentWindow):
                         )
                         continue
                     proc.terminate()
+                    terminate_targets.append(proc)
                 except Exception:
                     logger.debug("发送终止信号失败: pid=%s", proc.pid)
-            gone, alive = psutil.wait_procs(children, timeout=3)
+            if not terminate_targets:
+                return
+
+            # 只等待/强杀我们实际发过 terminate 的进程，避免误伤已跳过的更新器。
+            gone, alive = psutil.wait_procs(terminate_targets, timeout=3)
             for proc in alive:
                 try:
                     proc.kill()

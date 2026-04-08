@@ -660,11 +660,24 @@ class BaseUpdate(QThread):
         except Exception as exc:
             logger.warning("记录更新元数据失败: %s", exc)
 
-    def _is_under_any(self, relative: Path, parents: list[Path]) -> bool:
+    def _is_under_any(self, relative: Path | str, parents: list[Path | str]) -> bool:
+        if isinstance(relative, str):
+            relative = Path(relative.replace("\\", "/"))
+
+        relative_parts = tuple(part for part in relative.parts if part and part != ".")
+        if not relative_parts:
+            return False
+
         for parent in parents:
-            if len(parent.parts) > len(relative.parts):
+            if isinstance(parent, str):
+                parent = Path(parent.replace("\\", "/"))
+            parent_parts = tuple(part for part in parent.parts if part and part != ".")
+            if not parent_parts:
                 continue
-            if relative.parts[: len(parent.parts)] == parent.parts:
+
+            if len(parent_parts) > len(relative_parts):
+                continue
+            if relative_parts[: len(parent_parts)] == parent_parts:
                 return True
         return False
 
