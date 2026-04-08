@@ -247,12 +247,24 @@ updater_command = [
     os.path.join("dist", "MAH"),
 ]
 print("[INFO] Starting MAHUpdater build")
+updater_dist_path = os.path.join(os.getcwd(), "dist", "MAH", "MAHUpdater.exe")
+if os.path.exists(updater_dist_path):
+    print(f"[INFO] Removing stale updater binary: {updater_dist_path}")
+    os.remove(updater_dist_path)
+
 cmd = [sys.executable, "-m", "PyInstaller"] + updater_command
 result = subprocess.run(cmd, cwd=os.getcwd())
 if result.returncode != 0:
-    print(f"[WARN] MAHUpdater build failed with exit code {result.returncode}, continuing anyway")
+    raise RuntimeError(
+        f"MAHUpdater build failed with exit code {result.returncode}. Build aborted to avoid stale updater binary."
+    )
 else:
     print("[INFO] MAHUpdater build completed successfully")
+
+if not os.path.exists(updater_dist_path):
+    raise FileNotFoundError(
+        f"MAHUpdater build finished but output not found: {updater_dist_path}"
+    )
 
 
 def generate_file_list(input_dir, output_file=None):

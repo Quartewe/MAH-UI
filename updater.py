@@ -697,7 +697,7 @@ def _restore_from_backup(backups):
             update_logger.error(f"恢复 {src} 失败: {exc}")
 
 
-def _is_under_any(abs_path: str, parents: set[str]) -> bool:
+def _is_abs_under_any(abs_path: str, parents: set[str]) -> bool:
     """判断 abs_path 是否等于 parents 中任意路径，或位于其子路径下。"""
     for parent in parents:
         if not parent:
@@ -728,7 +728,7 @@ def _collect_root_entries_for_delete(
         abs_entry = os.path.abspath(os.path.join(root, entry))
         if abs_entry in skip_abs:
             continue
-        if _is_under_any(abs_entry, keep_abs) or _is_under_any(abs_entry, exclude_abs):
+        if _is_abs_under_any(abs_entry, keep_abs) or _is_abs_under_any(abs_entry, exclude_abs):
             continue
         delete_candidates.append(abs_entry)
     return delete_candidates
@@ -1416,7 +1416,7 @@ def _file_sha256(file_path: Path) -> str:
     return digest.hexdigest()
 
 
-def _is_under_any(relative: Path | str, parents: list[Path | str]) -> bool:
+def _is_relative_under_any(relative: Path | str, parents: list[Path | str]) -> bool:
     if isinstance(relative, str):
         relative = Path(relative.replace("\\", "/"))
 
@@ -1497,7 +1497,7 @@ def _apply_hotfix_by_diff(
             continue
 
         relative = src_file.relative_to(hotfix_root)
-        if protected and _is_under_any(relative, protected):
+        if protected and _is_relative_under_any(relative, protected):
             skipped_count += 1
             continue
 

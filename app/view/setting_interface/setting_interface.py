@@ -247,11 +247,37 @@ def start_auto_confirm_countdown(
 def rename_updater_binary(old_name: str, new_name: str) -> None:
     """重命名更新器二进制文件，供各界面复用。"""
     import os
+    import sys
+    from pathlib import Path
 
-    if os.path.exists(old_name) and os.path.exists(new_name):
-        os.remove(new_name)
-    if os.path.exists(old_name):
-        os.rename(old_name, new_name)
+    old_path = Path(old_name)
+    new_path = Path(new_name)
+
+    # 优先在当前工作目录与主程序目录查找，兼容从非程序目录启动的情况。
+    search_roots: list[Path] = [Path.cwd()]
+    if getattr(sys, "frozen", False):
+        try:
+            exe_dir = Path(sys.executable).resolve().parent
+            if exe_dir not in search_roots:
+                search_roots.append(exe_dir)
+        except Exception:
+            pass
+
+    candidate_pairs: list[tuple[Path, Path]] = []
+    if old_path.is_absolute() and new_path.is_absolute():
+        candidate_pairs.append((old_path, new_path))
+    else:
+        for root in search_roots:
+            candidate_old = old_path if old_path.is_absolute() else (root / old_path)
+            candidate_new = new_path if new_path.is_absolute() else (root / new_path)
+            candidate_pairs.append((candidate_old, candidate_new))
+
+    for candidate_old, candidate_new in candidate_pairs:
+        if candidate_old.exists() and candidate_new.exists():
+            candidate_new.unlink()
+        if candidate_old.exists():
+            candidate_old.rename(candidate_new)
+            return
 
 
 def _is_running_with_admin_privileges() -> bool:
@@ -322,6 +348,24 @@ def launch_updater_process(*extra_args: str) -> None:
     startup_timeout = 1.5
     attempted_targets: list[str] = []
 
+    search_roots: list[Path] = [Path.cwd()]
+    if getattr(sys, "frozen", False):
+        try:
+            exe_dir = Path(sys.executable).resolve().parent
+            if exe_dir not in search_roots:
+                search_roots.append(exe_dir)
+        except Exception as exc:
+            logger.debug("解析主程序目录失败，降级仅使用当前目录: %s", exc)
+
+    def _enumerate_candidates(file_names: list[str]) -> list[Path]:
+        candidates: list[Path] = []
+        for root in search_roots:
+            for name in file_names:
+                candidate = root / name
+                if candidate not in candidates:
+                    candidates.append(candidate)
+        return candidates
+
     def _wait_started(proc: subprocess.Popen, timeout: float) -> tuple[bool, int | None]:
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -368,12 +412,14 @@ def launch_updater_process(*extra_args: str) -> None:
         return False
 
     if sys.platform.startswith("win32"):
-        updater_candidates = [
-            Path("./MAHUpdater.exe"),
-            Path("./MFWUpdater.exe"),
-            Path("./MAHUpdater1.exe"),
-            Path("./MFWUpdater1.exe"),
-        ]
+        updater_candidates = _enumerate_candidates(
+            [
+                "MAHUpdater.exe",
+                "MFWUpdater.exe",
+                "MAHUpdater1.exe",
+                "MFWUpdater1.exe",
+            ]
+        )
 
         for candidate in updater_candidates:
             if not candidate.exists():
@@ -386,20 +432,19 @@ def launch_updater_process(*extra_args: str) -> None:
             ):
                 return
 
-        script_path = Path("./updater.py")
+        script_candidates = _enumerate_candidates(["updater.py"])
         python_candidates: list[Path] = []
         if getattr(sys, "frozen", False):
-            python_candidates.extend(
-                [
-                    Path("./_internal/python.exe"),
-                    Path(sys.executable).with_name("python.exe"),
-                    Path("./python.exe"),
-                ]
-            )
+            for root in search_roots:
+                python_candidates.append(root / "_internal" / "python.exe")
+                python_candidates.append(root / "python.exe")
+            python_candidates.append(Path(sys.executable).with_name("python.exe"))
         else:
             python_candidates.append(Path(sys.executable))
 
-        if script_path.exists():
+        for script_path in script_candidates:
+            if not script_path.exists():
+                continue
             for python_bin in python_candidates:
                 if not python_bin.exists():
                     continue
@@ -410,8 +455,8 @@ def launch_updater_process(*extra_args: str) -> None:
                         str(script_path.resolve(strict=False)),
                     ]
                     + args,
-                    label=f"python:{resolved_python.name}",
-                    cwd=str(Path.cwd()),
+                    label=f"python:{resolved_python.name}@{script_path.parent}",
+                    cwd=str(script_path.parent.resolve(strict=False)),
                 ):
                     return
 
@@ -421,12 +466,14 @@ def launch_updater_process(*extra_args: str) -> None:
         )
 
     if sys.platform.startswith(("darwin", "linux")):
-        updater_candidates = [
-            Path("./MAHUpdater"),
-            Path("./MFWUpdater"),
-            Path("./MAHUpdater1"),
-            Path("./MFWUpdater1"),
-        ]
+        updater_candidates = _enumerate_candidates(
+            [
+                "MAHUpdater",
+                "MFWUpdater",
+                "MAHUpdater1",
+                "MFWUpdater1",
+            ]
+        )
 
         for candidate in updater_candidates:
             if not candidate.exists():
@@ -439,13 +486,13 @@ def launch_updater_process(*extra_args: str) -> None:
             ):
                 return
 
-        script_path = Path("./updater.py")
-        if script_path.exists() and _try_spawn(
-            [sys.executable, str(script_path.resolve(strict=False))] + args,
-            label="python:sys.executable",
-            cwd=str(Path.cwd()),
-        ):
-            return
+        for script_path in _enumerate_candidates(["updater.py"]):
+            if script_path.exists() and _try_spawn(
+                [sys.executable, str(script_path.resolve(strict=False))] + args,
+                label="python:sys.executable",
+                cwd=str(script_path.parent.resolve(strict=False)),
+            ):
+                return
 
         raise RuntimeError(
             "未能启动更新程序，已尝试: "
@@ -3345,13 +3392,8 @@ class SettingInterface(QWidget):
 
     def _start_updater(self):
         """启动更新程序（允许更新器自行显示界面）。"""
-        try:
-            extra_args = ["-d"] if self._propagate_direct_run_arg else []
-            launch_updater_process(*extra_args)
-        except Exception as e:
-            logger.error(f"启动更新程序失败: {e}")
-            signalBus.info_bar_requested.emit("error", str(e))
-            return
+        extra_args = ["-d"] if self._propagate_direct_run_arg else []
+        launch_updater_process(*extra_args)
 
     def _on_download_progress(self, downloaded: int, total: int):
         """下载进度回调"""
