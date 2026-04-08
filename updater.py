@@ -14,6 +14,7 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import List, Tuple
 from uuid import uuid4
+import builtins
 
 DIRECT_RUN_EXTRA_ARGS: list[str] = []
 
@@ -214,14 +215,21 @@ def _get_mfw_instance_key() -> str:
     if mfw_exe:
         return os.path.abspath(mfw_exe)
     
-    # 由于工作目录相同，直接使用当前目录下的主程序路径
+    # 由于工作目录相同，优先使用当前目录下实际存在的主程序路径。
     if sys.platform.startswith("win32"):
-        default_exe = os.path.join(os.getcwd(), "MFW.exe")
+        candidates = [
+            os.path.join(os.getcwd(), "MAH.exe"),
+            os.path.join(os.getcwd(), "MFW.exe"),
+        ]
     else:
-        default_exe = os.path.join(os.getcwd(), "MFW")
-    
+        candidates = [
+            os.path.join(os.getcwd(), "MAH"),
+            os.path.join(os.getcwd(), "MFW"),
+        ]
+
+    selected = next((p for p in candidates if os.path.exists(p)), candidates[0])
     # 使用绝对路径作为实例键（与 main.py 保持一致）
-    return os.path.abspath(default_exe)
+    return os.path.abspath(selected)
 
 
 def is_mfw_running() -> bool:
@@ -462,13 +470,29 @@ def extract_zip_file_with_validation(update_file_path):
 
 def start_mfw_process():
     try:
-        if sys.platform.startswith("win32"):
-            cmd = [".\\MFW.exe"]
+        cmd: list[str] = []
+
+        # 优先使用主程序透传路径，保证与当前运行实例一致。
+        if RUNTIME_OPTS.mfw_exe_path:
+            cmd = [str(Path(RUNTIME_OPTS.mfw_exe_path))]
+        elif sys.platform.startswith("win32"):
+            candidates = [Path("./MAH.exe"), Path("./MFW.exe")]
+            selected = next((path for path in candidates if path.exists()), None)
+            if not selected:
+                update_logger.error("启动主程序失败：未找到 MAH.exe 或 MFW.exe")
+                return
+            cmd = [str(selected)]
         elif sys.platform.startswith(("darwin", "linux")):
-            cmd = ["./MFW"]
+            candidates = [Path("./MAH"), Path("./MFW")]
+            selected = next((path for path in candidates if path.exists()), None)
+            if not selected:
+                update_logger.error("启动主程序失败：未找到 MAH 或 MFW")
+                return
+            cmd = [str(selected)]
         else:
             update_logger.error("不支持的操作系统")
             return
+
         if DIRECT_RUN_EXTRA_ARGS:
             cmd.extend(DIRECT_RUN_EXTRA_ARGS)
         update_logger.info("重启/启动 MFW 进程: %s", " ".join(cmd))
@@ -571,6 +595,30 @@ if DIRECT_RUN_EXTRA_ARGS:
         "启动参数检测到直接运行标志，即将向 MFW 透传: %s",
         DIRECT_RUN_EXTRA_ARGS,
     )
+
+
+_ORIGINAL_PRINT = builtins.print
+
+
+def _safe_console_print(*args, **kwargs):
+    """
+    在无控制台/管道已断开时安全忽略 print，避免更新流程被 OSError 打断。
+    """
+    try:
+        _ORIGINAL_PRINT(*args, **kwargs)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) in {6, 232, 233}:
+            update_logger.debug("控制台输出不可用，已忽略 print: %s", exc)
+            return
+        raise
+    except ValueError as exc:
+        # 某些环境 stdout/stderr 关闭时会抛 ValueError。
+        update_logger.debug("控制台输出不可用(ValueError)，已忽略 print: %s", exc)
+        return
+
+
+# 覆盖模块内 print 调用，保持历史输出代码不变。
+print = _safe_console_print
 
 
 def load_update_metadata(update_dir):
