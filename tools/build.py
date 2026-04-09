@@ -247,10 +247,16 @@ updater_command = [
     os.path.join("dist", "MAH"),
 ]
 print("[INFO] Starting MAHUpdater build")
-updater_dist_path = os.path.join(os.getcwd(), "dist", "MAH", "MAHUpdater.exe")
-if os.path.exists(updater_dist_path):
-    print(f"[INFO] Removing stale updater binary: {updater_dist_path}")
-    os.remove(updater_dist_path)
+updater_dist_dir = os.path.join(os.getcwd(), "dist", "MAH")
+updater_output_candidates = [
+    os.path.join(updater_dist_dir, "MAHUpdater.exe"),
+    os.path.join(updater_dist_dir, "MAHUpdater"),
+]
+
+for updater_dist_path in updater_output_candidates:
+    if os.path.exists(updater_dist_path):
+        print(f"[INFO] Removing stale updater binary: {updater_dist_path}")
+        os.remove(updater_dist_path)
 
 cmd = [sys.executable, "-m", "PyInstaller"] + updater_command
 result = subprocess.run(cmd, cwd=os.getcwd())
@@ -261,10 +267,17 @@ if result.returncode != 0:
 else:
     print("[INFO] MAHUpdater build completed successfully")
 
-if not os.path.exists(updater_dist_path):
+built_updater_path = next(
+    (path for path in updater_output_candidates if os.path.exists(path)),
+    None,
+)
+if not built_updater_path:
     raise FileNotFoundError(
-        f"MAHUpdater build finished but output not found: {updater_dist_path}"
+        "MAHUpdater build finished but output not found in candidates: "
+        + ", ".join(updater_output_candidates)
     )
+
+print(f"[INFO] MAHUpdater artifact: {built_updater_path}")
 
 
 def generate_file_list(input_dir, output_file=None):
