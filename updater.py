@@ -608,12 +608,10 @@ def _safe_console_print(*args, **kwargs):
         _ORIGINAL_PRINT(*args, **kwargs)
     except OSError as exc:
         if getattr(exc, "winerror", None) in {6, 232, 233}:
-            update_logger.debug("控制台输出不可用，已忽略 print: %s", exc)
             return
         raise
-    except ValueError as exc:
+    except ValueError:
         # 某些环境 stdout/stderr 关闭时会抛 ValueError。
-        update_logger.debug("控制台输出不可用(ValueError)，已忽略 print: %s", exc)
         return
 
 
