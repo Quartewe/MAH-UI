@@ -501,6 +501,57 @@ def start_mfw_process():
         update_logger.error(f"启动MFW程序失败: {exc}")
 
 
+def _schedule_delete_temp_updater_binary() -> None:
+    """
+    更新完成后，若当前进程是 Updater1，延迟删除临时更新器文件。
+    """
+    try:
+        current_updater = Path(sys.argv[0]).resolve(strict=False)
+    except Exception as exc:
+        update_logger.debug("[步骤7] 获取当前更新器路径失败，跳过清理: %s", exc)
+        return
+
+    temp_updater_names = {
+        "mahupdater1.exe",
+        "mfwupdater1.exe",
+        "mahupdater1",
+        "mfwupdater1",
+    }
+    if current_updater.name.lower() not in temp_updater_names:
+        return
+
+    if not current_updater.exists():
+        return
+
+    try:
+        if sys.platform.startswith("win32"):
+            creation_flags = 0
+            creation_flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            creation_flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+            delete_cmd = (
+                "ping 127.0.0.1 -n 3 >nul && del /f /q "
+                + subprocess.list2cmdline([str(current_updater)])
+            )
+            subprocess.Popen(
+                ["cmd", "/c", delete_cmd],
+                creationflags=creation_flags,
+            )
+        elif sys.platform.startswith(("darwin", "linux")):
+            subprocess.Popen(
+                ["sh", "-c", 'sleep 2; rm -f "$1"', "cleanup", str(current_updater)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            update_logger.debug("[步骤7] 当前平台不支持临时更新器自动清理: %s", sys.platform)
+            return
+
+        update_logger.info("[步骤7] 已安排清理临时更新器: %s", current_updater)
+    except Exception as exc:
+        update_logger.warning("[步骤7] 安排清理临时更新器失败: %s -> %s", current_updater, exc)
+
+
 def cleanup_update_artifacts(update_file_path, metadata_path=None):
     target_files = [Path(update_file_path)]
     if metadata_path:
@@ -1884,6 +1935,7 @@ def standard_update():
     # 重启程序
     print("重启MFW程序...")
     start_mfw_process()
+    _schedule_delete_temp_updater_binary()
 
 
 def recovery_mode():
