@@ -314,16 +314,7 @@ class TaskFlowRunner(QObject):
 
         # 连接日志输出信号
         signalBus.log_output.connect(collect_log)
-        current_config = self.config_service.get_config(
-            self.config_service.current_config_id
-        )
-        if not current_config:
-            # 保持 bundle_path 的安全默认值
-            self.bundle_path = "./"
-        else:
-            self.bundle_path = self.config_service.get_bundle_path_for_config(
-                current_config
-            )
+        self._update_bundle_path_from_current_config()
         try:
             if self.fs_signal_bus:
                 self.fs_signal_bus.fs_start_button_status.emit(
@@ -357,92 +348,14 @@ class TaskFlowRunner(QObject):
                 return
             logger.info("资源加载完成")
 
-            # 构建默认 pipeline_override
-            # 合并优先级（从低到高）：global_option < resource.option < controller.option
-            # 任务级 override 在 run_task 中合并（最高优先级）
-            from app.core.utils.pipeline_helper import (
-                get_pipeline_override_from_task_option,
-                get_controller_option_pipeline_override,
-                _deep_merge_dict,
+            # 构建默认 override，并在资源加载后完成 agent/custom 初始化
+            self._build_default_pipeline_override(
+                controller_cfg.task_option,
+                resource_cfg.task_option,
             )
-
-            # 1. global_option + resource.option（已在函数内按优先级合并）
-            self._default_pipeline_override = get_pipeline_override_from_task_option(
-                self.task_service.interface, resource_cfg.task_option, _RESOURCE_
-            )
-
-            # 2. controller.option（优先级高于 resource.option 和 global_option）
-            controller_override = get_controller_option_pipeline_override(
-                self.task_service.interface, controller_cfg.task_option
-            )
-            if controller_override:
-                _deep_merge_dict(self._default_pipeline_override, controller_override)
-
-            if self.task_service.interface.get("agent", None):
-                self.maafw.agent_data_raw = self.task_service.interface.get(
-                    "agent", None
-                )
-                signalBus.log_output.emit("INFO", self.tr("Agent Service Start"))
-
-            if self.task_service.interface.get("custom", None) and self.maafw.resource:
-                signalBus.log_output.emit(
-                    "INFO", self.tr("Starting to load custom components...")
-                )
-                self.maafw.resource.clear_custom_recognition()
-                self.maafw.resource.clear_custom_action()
-
-                # 兼容绝对路径与相对 bundle.path 的自定义配置路径
-                custom_config_path = self.task_service.interface.get("custom", "")
-                if custom_config_path:
-                    bundle_path_str = self.bundle_path or "./"
-                    base_dir = Path(bundle_path_str)
-                    if not base_dir.is_absolute():
-                        base_dir = (Path.cwd() / base_dir).resolve()
-
-                    # 先处理占位符与前导分隔符
-                    raw_custom = str(custom_config_path).replace("{PROJECT_DIR}", "")
-                    normalized_custom = raw_custom.lstrip("\\/")
-                    custom_path_obj = Path(normalized_custom)
-
-                    # 绝对路径：直接使用，保持兼容已有配置
-                    if custom_path_obj.is_absolute():
-                        custom_config_path = custom_path_obj
-                    else:
-                        # 相对路径：视为相对 bundle.path 的路径
-                        custom_config_path = (base_dir / normalized_custom).resolve()
-
-                result = self.maafw.load_custom_objects(
-                    custom_config_path=custom_config_path
-                )
-                if not result:
-                    failed_actions = self.maafw.custom_load_report["actions"]["failed"]
-                    failed_recogs = self.maafw.custom_load_report["recognitions"][
-                        "failed"
-                    ]
-                    detail_parts = [
-                        f"动作 {item.get('name', '')}: {item.get('reason', '')}"
-                        for item in failed_actions
-                    ] + [
-                        f"识别器 {item.get('name', '')}: {item.get('reason', '')}"
-                        for item in failed_recogs
-                    ]
-                    detail_msg = (
-                        "；".join([part for part in detail_parts if part]) or "未知原因"
-                    )
-
-                    logger.error(f"自定义组件加载失败，流程终止: {detail_msg}")
-                    signalBus.log_output.emit(
-                        "ERROR",
-                        self.tr(
-                            "Custom components loading failed, the flow is terminated: "
-                        )
-                        + detail_msg,
-                    )
-                    signalBus.log_output.emit(
-                        "ERROR", self.tr("please try to reset resource in setting")
-                    )
-                    await self.stop_task()
-                    return
+            if not self._apply_agent_and_custom_components():
+                await self.stop_task()
+                return
             # 资源加载完成后连接控制器
             logger.info("开始连接设备...")
             signalBus.log_output.emit("INFO", self.tr("Starting to connect device..."))
@@ -906,6 +819,220 @@ class TaskFlowRunner(QObject):
             return False
 
         return current_norm in {name.lower() for name in allowed}
+
+    def _update_bundle_path_from_current_config(self) -> None:
+        """根据当前配置刷新 bundle 路径。"""
+        current_config = self.config_service.get_config(self.config_service.current_config_id)
+        if not current_config:
+            self.bundle_path = "./"
+            return
+        self.bundle_path = self.config_service.get_bundle_path_for_config(current_config)
+
+    def _build_default_pipeline_override(
+        self,
+        controller_option: Dict[str, Any] | None,
+        resource_option: Dict[str, Any] | None,
+    ) -> None:
+        """构建默认 pipeline_override（global < resource < controller）。"""
+        from app.core.utils.pipeline_helper import (
+            _deep_merge_dict,
+            get_controller_option_pipeline_override,
+            get_pipeline_override_from_task_option,
+        )
+
+        resource_option_dict = resource_option if isinstance(resource_option, dict) else {}
+        controller_option_dict = (
+            controller_option if isinstance(controller_option, dict) else {}
+        )
+
+        self._default_pipeline_override = get_pipeline_override_from_task_option(
+            self.task_service.interface,
+            resource_option_dict,
+            _RESOURCE_,
+        )
+        controller_override = get_controller_option_pipeline_override(
+            self.task_service.interface,
+            controller_option_dict,
+        )
+        if controller_override:
+            _deep_merge_dict(self._default_pipeline_override, controller_override)
+
+    def _apply_agent_and_custom_components(self) -> bool:
+        """按当前 interface 应用 agent 配置并加载 custom 组件。"""
+        agent_config = self.task_service.interface.get("agent", None)
+        self.maafw.agent_data_raw = agent_config if agent_config else None
+        if agent_config:
+            signalBus.log_output.emit("INFO", self.tr("Agent Service Start"))
+
+        if not self.task_service.interface.get("custom", None) or not self.maafw.resource:
+            return True
+
+        signalBus.log_output.emit("INFO", self.tr("Starting to load custom components..."))
+        self.maafw.resource.clear_custom_recognition()
+        self.maafw.resource.clear_custom_action()
+
+        custom_config_path = self.task_service.interface.get("custom", "")
+        if custom_config_path:
+            bundle_path_str = self.bundle_path or "./"
+            base_dir = Path(bundle_path_str)
+            if not base_dir.is_absolute():
+                base_dir = (Path.cwd() / base_dir).resolve()
+
+            raw_custom = str(custom_config_path).replace("{PROJECT_DIR}", "")
+            normalized_custom = raw_custom.lstrip("\\/")
+            custom_path_obj = Path(normalized_custom)
+
+            if custom_path_obj.is_absolute():
+                custom_config_path = custom_path_obj
+            else:
+                custom_config_path = (base_dir / normalized_custom).resolve()
+
+        result = self.maafw.load_custom_objects(custom_config_path=custom_config_path)
+        if result:
+            return True
+
+        failed_actions = self.maafw.custom_load_report["actions"]["failed"]
+        failed_recogs = self.maafw.custom_load_report["recognitions"]["failed"]
+        detail_parts = [
+            f"动作 {item.get('name', '')}: {item.get('reason', '')}"
+            for item in failed_actions
+        ] + [
+            f"识别器 {item.get('name', '')}: {item.get('reason', '')}"
+            for item in failed_recogs
+        ]
+        detail_msg = "；".join([part for part in detail_parts if part]) or "未知原因"
+
+        logger.error(f"自定义组件加载失败，流程终止: {detail_msg}")
+        signalBus.log_output.emit(
+            "ERROR",
+            self.tr("Custom components loading failed, the flow is terminated: ")
+            + detail_msg,
+        )
+        signalBus.log_output.emit("ERROR", self.tr("please try to reset resource in setting"))
+        return False
+
+    async def run_pipeline_entry(
+        self,
+        entry: str,
+        pipeline_override: Dict[str, Any] | None = None,
+        *,
+        merge_default_override: bool = True,
+        reset_runtime_after_task: bool = True,
+    ) -> bool:
+        """按 entry 直接执行一条 pipeline 任务（面向插件/外部调用）。"""
+        entry_text = str(entry or "").strip()
+        if not entry_text:
+            logger.error("插件调用 pipeline 失败：entry 为空")
+            signalBus.log_output.emit("ERROR", self.tr("Pipeline entry is empty"))
+            return False
+
+        if self._is_running:
+            logger.warning("任务流执行中，拒绝插件 pipeline 调用: %s", entry_text)
+            signalBus.log_output.emit(
+                "WARNING",
+                self.tr("Task flow is running, skip plugin pipeline task: {}" ).format(
+                    entry_text
+                ),
+            )
+            return False
+
+        if pipeline_override is None:
+            pipeline_override = {}
+        if not isinstance(pipeline_override, dict):
+            logger.error("插件调用 pipeline 失败：pipeline_override 必须是 dict")
+            signalBus.log_output.emit(
+                "ERROR", self.tr("pipeline_override must be a JSON object")
+            )
+            return False
+
+        self.need_stop = False
+        self._manual_stop = False
+        self._update_bundle_path_from_current_config()
+
+        controller_cfg = self.task_service.get_task(_CONTROLLER_)
+        resource_cfg = self.task_service.get_task(_RESOURCE_)
+        if not controller_cfg or not resource_cfg:
+            logger.error("插件调用 pipeline 失败：未找到基础 Controller/Resource 任务")
+            signalBus.log_output.emit(
+                "ERROR",
+                self.tr("Base controller/resource task is missing."),
+            )
+            return False
+
+        invalid_reason = self._validate_base_controller_and_resource()
+        if invalid_reason is not None:
+            self._reset_base_controller_and_resource_to_default()
+            signalBus.log_output.emit(
+                "ERROR",
+                self.tr(
+                    "Controller or resource in current config does not exist in interface. They have been reset to default. Please check and run again."
+                ),
+            )
+            signalBus.log_output.emit("ERROR", invalid_reason)
+            return False
+
+        try:
+            # 保证插件执行使用干净运行时，避免残留的 tasker/agent 干扰。
+            try:
+                await self.maafw.stop_task()
+            except Exception as exc:
+                logger.debug("插件 pipeline 前置清理失败（忽略）: %s", exc)
+
+            logger.info("插件触发 pipeline 任务: %s", entry_text)
+            if not await self.load_resources(resource_cfg.task_option):
+                logger.error("插件 pipeline 任务加载资源失败")
+                return False
+
+            self._build_default_pipeline_override(
+                controller_cfg.task_option,
+                resource_cfg.task_option,
+            )
+            if not self._apply_agent_and_custom_components():
+                return False
+
+            signalBus.log_output.emit("INFO", self.tr("Starting to connect device..."))
+            resource_target = (
+                resource_cfg.task_option.get("resource")
+                if isinstance(getattr(resource_cfg, "task_option", None), dict)
+                else None
+            )
+            self._connect_error_reason = None
+            connected = await self.connect_device(
+                controller_cfg.task_option,
+                resource_target=resource_target,
+            )
+            if not connected:
+                logger.error("插件 pipeline 任务连接设备失败")
+                return False
+
+            import copy
+            from app.core.utils.pipeline_helper import _deep_merge_dict
+
+            final_override: Dict[str, Any] = {}
+            if merge_default_override:
+                final_override = copy.deepcopy(self._default_pipeline_override)
+            _deep_merge_dict(final_override, pipeline_override)
+
+            self._start_task_timeout(entry_text)
+            ok = await self.maafw.run_task(
+                entry_text,
+                final_override,
+                cfg.get(cfg.save_screenshot),
+            )
+            if not ok:
+                logger.error("插件 pipeline 任务执行失败: %s", entry_text)
+            return bool(ok)
+        finally:
+            self._stop_task_timeout()
+            if reset_runtime_after_task:
+                try:
+                    await self.maafw.stop_task()
+                except Exception as exc:
+                    logger.warning("插件 pipeline 收尾失败: %s", exc)
+            if self.fs_signal_bus:
+                self.fs_signal_bus.fs_start_button_status.emit(
+                    {"text": "START", "status": "enabled"}
+                )
 
     @property
     def is_running(self) -> bool:

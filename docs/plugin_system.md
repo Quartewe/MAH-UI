@@ -82,6 +82,7 @@ meta = PluginMeta(
 - `service_coordinator`
 - `language_code`：当前 UI 语言代码（例如 `zh_cn` / `en_us` / `ja_jp`）
 - `tr(value, i18n_map=None)`：解析 `"$key"` 文本的快捷函数
+- `invoke_pipeline_task(entry, pipeline_override=None, merge_default_override=True, reset_runtime_after_task=True)`：调用 MaaFW pipeline 任务
 
 `ctx.tr()` 使用示例：
 
@@ -89,7 +90,36 @@ meta = PluginMeta(
 title = QLabel(ctx.tr("$page_title", self.meta.i18n))
 ```
 
-> 建议只使用前端能力，不要在插件中耦合后端关键流程。
+`ctx.invoke_pipeline_task()` 使用示例：
+
+```python
+import asyncio
+
+
+def _on_click_run(self):
+    asyncio.create_task(self._run_pipeline())
+
+
+async def _run_pipeline(self):
+    ok = await self._ctx.invoke_pipeline_task(
+        entry="MyPipelineEntry",
+        pipeline_override={
+            "MyPipelineEntry": {
+                "enabled": True,
+            }
+        },
+        merge_default_override=True,
+        reset_runtime_after_task=True,
+    )
+    self._ctx.logger.info("插件触发 pipeline 结果: %s", ok)
+```
+
+参数说明：
+
+- `entry`：`tasker.post_task(entry, ...)` 的入口节点名。
+- `pipeline_override`：可选，覆盖当前资源中的 pipeline 字段。
+- `merge_default_override`：是否先合并 UI 当前配置的默认 override（global/resource/controller）。
+- `reset_runtime_after_task`：任务结束后是否自动清理 MaaFW 运行时（推荐 `True`）。
 
 ---
 

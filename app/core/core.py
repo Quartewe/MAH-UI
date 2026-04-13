@@ -877,6 +877,21 @@ class ServiceCoordinator:
             pass
         return await self.task_runner.run_tasks_flow(task_id)
 
+    async def run_pipeline_task(
+        self,
+        entry: str,
+        pipeline_override: Dict[str, Any] | None = None,
+        merge_default_override: bool = True,
+        reset_runtime_after_task: bool = True,
+    ) -> bool:
+        """按 entry 直接执行一条 MaaFW pipeline 任务（供插件等外部调用）。"""
+        return await self.task_runner.run_pipeline_entry(
+            entry=entry,
+            pipeline_override=pipeline_override,
+            merge_default_override=merge_default_override,
+            reset_runtime_after_task=reset_runtime_after_task,
+        )
+
     async def stop_task_flow(self):
         """停止当前任务流（UI/外部调用，视为手动停止）。"""
         return await self.task_runner.stop_task(manual=True)

@@ -1354,6 +1354,7 @@ class MainWindow(MSFluentWindow):
             logger=logger,
             signal_bus=signalBus,
             service_coordinator=self.service_coordinator,
+            run_pipeline_task=self.service_coordinator.run_pipeline_task,
         )
         self._load_plugin_prefs_from_config()
         self._plugin_manager = PluginManager(plugin_dir=plugin_dir, ctx=ctx)
