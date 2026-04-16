@@ -453,6 +453,7 @@ class MainWindow(MSFluentWindow):
         self._auto_update_thread = None
         self._auto_update_in_progress = False
         self._auto_update_pending_restart = False
+        self._auto_update_stage: Optional[str] = None
         self._pending_auto_run = False
         self._auto_run_scheduled = False  # 标记是否已调度过启动后自动运行，避免重复触发
         self._bundle_interface_added_to_nav = (
@@ -2676,49 +2677,62 @@ class MainWindow(MSFluentWindow):
             self._cli_auto_run or cfg.get(cfg.run_after_startup)
         )
         if cfg.get(cfg.auto_update):
-            logger.info("自动更新已开启，准备启动自动更新线程")
-            self._start_auto_update_thread()
+            logger.info("自动更新已开启，按顺序执行：资源更新 -> 本体更新")
+            self._start_auto_update_thread(update_target="resource")
             return
         # 未开启 UI 自动更新时，直接进入下一步：检查是否需要执行 bundle 自动更新
         logger.info("自动更新未开启，改为检查并执行 bundle 自动更新")
         self._check_and_start_bundle_update()
 
-    def _start_auto_update_thread(self) -> None:
+    def _start_auto_update_thread(self, update_target: str = "software") -> None:
         """启动自动更新，复用设置页的更新器并避免重复。"""
+        target = "software" if update_target == "software" else "resource"
         logger.info(
-            "进入 _start_auto_update_thread，in_progress=%s",
+            "进入 _start_auto_update_thread，target=%s，in_progress=%s，stage=%s",
+            target,
             self._auto_update_in_progress,
+            self._auto_update_stage,
         )
         if self._auto_update_in_progress:
-            logger.info("自动更新已在进行，跳过启动")
+            logger.info("自动更新已在进行，跳过启动，target=%s", target)
             return
 
         setting_interface = getattr(self, "SettingInterface", None)
         if not self.service_coordinator or setting_interface is None:
-            logger.warning(
-                "自动更新未启动：更新器未就绪，改为检查并执行 bundle 自动更新"
-            )
-            # UI 自动更新无法启动时，直接进入 bundle 自动更新阶段
+            if target == "resource":
+                logger.warning("资源自动更新未启动：更新器未就绪，继续尝试本体自动更新")
+                self._start_auto_update_thread(update_target="software")
+                return
+            logger.warning("自动更新未启动：更新器未就绪，改为检查并执行 bundle 自动更新")
             self._check_and_start_bundle_update()
             return
 
         started = False
         self._auto_update_in_progress = True
+        self._auto_update_stage = target
         try:
-            started = setting_interface.start_auto_update()
+            started = setting_interface.start_auto_update(update_target=target)
         except Exception as exc:
-            logger.error("自动更新启动失败: %s", exc)
+            logger.error("%s自动更新启动失败: %s", "资源" if target == "resource" else "本体", exc)
             started = False
 
         if started:
             self._auto_update_thread = getattr(setting_interface, "_updater", None)
-            logger.info("自动更新线程已启动，线程对象=%s", self._auto_update_thread)
+            logger.info(
+                "%s自动更新线程已启动，线程对象=%s",
+                "资源" if target == "resource" else "本体",
+                self._auto_update_thread,
+            )
             return
 
         self._auto_update_in_progress = False
         self._auto_update_thread = None
-        # UI 自动更新未成功启动，继续检查 bundle 自动更新
-        logger.info("自动更新未成功启动，改为检查并执行 bundle 自动更新")
+        self._auto_update_stage = None
+        if target == "resource":
+            logger.info("资源自动更新未成功启动，继续检查本体自动更新")
+            self._start_auto_update_thread(update_target="software")
+            return
+        logger.info("本体自动更新未成功启动，改为检查并执行 bundle 自动更新")
         self._check_and_start_bundle_update()
 
     def _schedule_auto_run(self) -> None:
@@ -2764,8 +2778,9 @@ class MainWindow(MSFluentWindow):
     def _on_update_stopped_main(self, status: int):
         """监听更新结束，串行触发自动运行或提示重启。"""
         logger.info(
-            "收到更新结束信号，status=%s，pending_auto_run=%s，setting_update_completed=%s，bundle_update_in_progress=%s",
+            "收到更新结束信号，status=%s，stage=%s，pending_auto_run=%s，setting_update_completed=%s，bundle_update_in_progress=%s",
             status,
+            self._auto_update_stage,
             self._pending_auto_run,
             self._setting_update_completed,
             self._bundle_update_in_progress,
@@ -2773,11 +2788,49 @@ class MainWindow(MSFluentWindow):
 
         # 判断是设置更新还是 bundle 更新
         if self._auto_update_in_progress and not self._bundle_update_in_progress:
-            # 这是设置更新完成
-            logger.info("设置更新完成，status=%s", status)
+            stage = self._auto_update_stage or "software"
+            if stage == "resource":
+                logger.info("资源自动更新阶段完成，status=%s", status)
+                self._auto_update_in_progress = False
+                self._auto_update_thread = None
+                self._auto_update_stage = None
+
+                if status == 1:
+                    # 资源热更新后刷新标题，再进入本体阶段。
+                    QTimer.singleShot(0, self.set_title)
+                if status == 2:
+                    self._auto_update_pending_restart = True
+                    self._pending_auto_run = False
+                    setting_interface = getattr(self, "SettingInterface", None)
+                    logger.info(
+                        "资源更新需要重启完成更新，auto_update=%s，设置页存在=%s",
+                        cfg.get(cfg.auto_update),
+                        bool(setting_interface),
+                    )
+                    if setting_interface:
+                        setting_interface.trigger_instant_update_prompt(
+                            auto_accept=cfg.get(cfg.auto_update)
+                        )
+                    else:
+                        logger.warning("SettingInterface 不存在，无法触发立即更新提示")
+                    return
+                if status == 3:
+                    logger.info("资源自动更新阶段被取消，转入 bundle 自动更新阶段")
+                    self._check_and_start_bundle_update()
+                    return
+
+                logger.info("资源自动更新阶段结束，继续进入本体自动更新阶段")
+                QTimer.singleShot(
+                    0,
+                    lambda: self._start_auto_update_thread(update_target="software"),
+                )
+                return
+
+            logger.info("本体自动更新阶段完成，status=%s", status)
             self._setting_update_completed = True
             self._auto_update_in_progress = False
             self._auto_update_thread = None
+            self._auto_update_stage = None
 
             if status == 1:
                 # 热更新完成后，重新设置窗口标题（延迟到下一个事件循环，确保 reinit 完成）
@@ -2791,7 +2844,7 @@ class MainWindow(MSFluentWindow):
                 self._pending_auto_run = False
                 setting_interface = getattr(self, "SettingInterface", None)
                 logger.info(
-                    "设置更新需要重启完成更新，auto_update=%s，设置页存在=%s",
+                    "本体更新需要重启完成更新，auto_update=%s，设置页存在=%s",
                     cfg.get(cfg.auto_update),
                     bool(setting_interface),
                 )
@@ -2817,6 +2870,7 @@ class MainWindow(MSFluentWindow):
         # 其他情况（可能是手动触发的更新）
         self._auto_update_in_progress = False
         self._auto_update_thread = None
+        self._auto_update_stage = None
         if status == 1:
             # 热更新完成后，重新设置窗口标题（延迟到下一个事件循环，确保 reinit 完成）
             QTimer.singleShot(0, self.set_title)

@@ -3001,46 +3001,65 @@ class SettingInterface(QWidget):
         self._updater.start()
         return True
 
-    def start_auto_update(self) -> bool:
-        """供主窗口调用的自动更新入口，复用设置页的更新器。"""
+    def start_auto_update(self, update_target: str = "software") -> bool:
+        """供主窗口调用的自动更新入口，支持按目标触发更新。"""
         if not self._service_coordinator:
             logger.warning("service_coordinator 未初始化，跳过自动更新")
             return False
 
-        if not self._updater:
-            self._init_updater()
+        target = "software" if update_target == "software" else "resource"
 
         if self._updater and self._updater.isRunning():
-            logger.info("自动更新已在进行，跳过重复启动")
+            logger.info("自动更新已在进行，跳过重复启动，target=%s", target)
             return True
 
-        # 如果已经有本地更新包（初始化时已检测），且已经准备好立即更新状态，则不再重复处理
-        if (
-            self._local_update_package
-            and self._update_button_handler == self._on_instant_update_clicked
-        ):
-            logger.info("本地更新包已在初始化时处理，跳过重复处理")
-            return True
-
-        if self._refresh_local_update_package(restart_required=True):
-            if self._is_local_update_hotfix():
-                logger.info(
-                    "自动更新检测到热更新包，直接启动热更新流程（auto_accept=True）"
-                )
-                return self._start_hotfix_update()
-            logger.info(
-                "自动更新检测到本地更新包，直接进入立即更新确认（auto_accept=True）"
+        interface = self._service_coordinator.task.interface or {}
+        if target == "software":
+            # 先固定为软件更新器，避免此前资源更新器残留导致后续分支误用。
+            self._updater = Update(
+                service_coordinator=self._service_coordinator,
+                stop_signal=signalBus.update_stopped,
+                progress_signal=signalBus.update_progress,
+                info_bar_signal=signalBus.info_bar_requested,
+                interface=interface,
+                update_target="software",
             )
-            self._handle_instant_update(auto_accept=True, notify_if_cancel=True)
-            return True
 
-        if not self._updater:
-            logger.warning("更新器未初始化，无法自动更新")
-            return False
+            # 软件更新沿用现有本地包优先策略。
+            if (
+                self._local_update_package
+                and self._update_button_handler == self._on_instant_update_clicked
+            ):
+                logger.info("本地更新包已在初始化时处理，跳过重复处理")
+                return True
+
+            if self._refresh_local_update_package(restart_required=True):
+                if self._is_local_update_hotfix():
+                    logger.info(
+                        "自动更新检测到热更新包，直接启动热更新流程（auto_accept=True）"
+                    )
+                    return self._start_hotfix_update()
+                logger.info(
+                    "自动更新检测到本地更新包，直接进入立即更新确认（auto_accept=True）"
+                )
+                self._handle_instant_update(auto_accept=True, notify_if_cancel=True)
+                return True
+        else:
+            # 资源自动更新只做在线版本检查与下载，不复用软件本地包流程。
+            self._updater = Update(
+                service_coordinator=self._service_coordinator,
+                stop_signal=signalBus.update_stopped,
+                progress_signal=signalBus.update_progress,
+                info_bar_signal=signalBus.info_bar_requested,
+                interface=interface,
+                force_full_download=False,
+                update_target="resource",
+            )
 
         self._show_progress_bar()
         self._bind_stop_button(self.tr("Stop update"), enable=False)
         self._lock_update_button_temporarily()
+        logger.info("自动更新线程准备启动，target=%s", target)
         self._updater.start()
         return True
 
