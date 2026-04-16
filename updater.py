@@ -1501,6 +1501,82 @@ def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
     ]
 
 
+def _iter_effective_entries(root: Path) -> list[Path]:
+    """列出用于判断更新类型的有效顶层条目。"""
+    if not root.exists() or not root.is_dir():
+        return []
+
+    ignored_names = {"__MACOSX", ".DS_Store"}
+    entries = [
+        entry
+        for entry in root.iterdir()
+        if entry.name not in ignored_names and not entry.name.startswith("._")
+    ]
+    return sorted(entries, key=lambda item: item.name.lower())
+
+
+def _resolve_payload_root(hotfix_root: Path) -> Path:
+    """解析热更包的实际内容根目录，兼容单层包装目录。"""
+    payload_root = hotfix_root
+    for _ in range(2):
+        entries = _iter_effective_entries(payload_root)
+        if len(entries) == 1 and entries[0].is_dir():
+            payload_root = entries[0]
+            continue
+        break
+    return payload_root
+
+
+def _is_resource_package(payload_root: Path) -> bool:
+    """仅当内容物只包含 image 与 index 两个目录时，判定为资源更新包。"""
+    entries = _iter_effective_entries(payload_root)
+    if not entries:
+        return False
+    if any(not entry.is_dir() for entry in entries):
+        return False
+    entry_names = {entry.name.lower() for entry in entries}
+    return entry_names == {"image", "index"}
+
+
+def _apply_resource_hotfix(payload_root: Path, project_path: Path) -> tuple[int, int, int, int]:
+    """应用资源更新包：image -> resource/base/image，index -> resource/index。"""
+    image_src = payload_root / "image"
+    index_src = payload_root / "index"
+    if not image_src.is_dir() or not index_src.is_dir():
+        raise FileNotFoundError(
+            f"资源更新包结构异常: image={image_src.is_dir()} index={index_src.is_dir()}"
+        )
+
+    image_dst = project_path / "resource" / "base" / "image"
+    index_dst = project_path / "resource" / "index"
+    image_dst.mkdir(parents=True, exist_ok=True)
+    index_dst.mkdir(parents=True, exist_ok=True)
+
+    update_logger.info(
+        "[步骤5][资源更新] 开始增量覆盖 image: %s -> %s",
+        image_src,
+        image_dst,
+    )
+    image_applied, image_skipped = _apply_hotfix_by_diff(
+        image_src,
+        image_dst,
+        protected_dirs=None,
+    )
+
+    update_logger.info(
+        "[步骤5][资源更新] 开始覆盖 index: %s -> %s",
+        index_src,
+        index_dst,
+    )
+    index_applied, index_skipped = _apply_hotfix_by_diff(
+        index_src,
+        index_dst,
+        protected_dirs=None,
+    )
+
+    return image_applied, image_skipped, index_applied, index_skipped
+
+
 def _normalize_relative_protected_dirs(
     protected_dirs: list[Path | str] | None,
 ) -> list[Path]:
@@ -1698,43 +1774,66 @@ def apply_github_hotfix(package_path, metadata=None):
         return False
     update_logger.info(f"[步骤5] 验证 hotfix 目录存在: {hotfix_root}")
 
-    update_logger.info("[步骤5] 读取 interface 配置文件...")
-    interface_paths, interface_data = _load_interface_data(bundle_path_obj)
-    resource_dirs = _get_resource_dirs_from_interface(interface_data)
-    update_logger.info(f"[步骤5] 获取到 {len(resource_dirs)} 个资源目录")
-
     try:
-        removed_pipeline_dirs = _strip_pipeline_dirs_from_hotfix(
-            Path(hotfix_root),
-            project_path,
-            resource_dirs,
-        )
-        if removed_pipeline_dirs:
-            update_logger.info(
-                f"[步骤5] 已保护本地 pipeline，热更包中共移除 {removed_pipeline_dirs} 个 pipeline 目录"
-            )
-
-        protected_dirs = _software_protected_dirs_from_metadata(metadata)
-        if protected_dirs:
-            update_logger.info(
-                "[步骤5] 软件增量更新保护目录: %s",
-                [str(p) for p in protected_dirs],
-            )
-
-        update_logger.info(f"[步骤5] 开始差异覆盖项目目录: {hotfix_root} -> {project_path}")
-        applied_count, skipped_count = _apply_hotfix_by_diff(
-            Path(hotfix_root),
-            project_path,
-            protected_dirs,
-        )
+        payload_root = _resolve_payload_root(Path(hotfix_root))
+        resource_package = _is_resource_package(payload_root)
         update_logger.info(
-            "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个文件",
-            applied_count,
-            skipped_count,
+            "[步骤5] 更新包类型判定: %s (payload=%s)",
+            "资源更新" if resource_package else "应用更新",
+            payload_root,
         )
 
-        if _update_interface_version(interface_paths, version):
-            update_logger.info("[步骤5] interface 配置同步完毕")
+        if resource_package:
+            image_applied, image_skipped, index_applied, index_skipped = (
+                _apply_resource_hotfix(payload_root, project_path)
+            )
+            update_logger.info(
+                "[步骤5][资源更新] 差异应用完成: image 应用 %s 跳过 %s, index 应用 %s 跳过 %s",
+                image_applied,
+                image_skipped,
+                index_applied,
+                index_skipped,
+            )
+            update_logger.info("[步骤5][资源更新] 跳过 interface 版本号更新")
+        else:
+            update_logger.info("[步骤5] 读取 interface 配置文件...")
+            interface_paths, interface_data = _load_interface_data(bundle_path_obj)
+            resource_dirs = _get_resource_dirs_from_interface(interface_data)
+            update_logger.info(f"[步骤5] 获取到 {len(resource_dirs)} 个资源目录")
+
+            removed_pipeline_dirs = _strip_pipeline_dirs_from_hotfix(
+                payload_root,
+                project_path,
+                resource_dirs,
+            )
+            if removed_pipeline_dirs:
+                update_logger.info(
+                    f"[步骤5] 已保护本地 pipeline，热更包中共移除 {removed_pipeline_dirs} 个 pipeline 目录"
+                )
+
+            protected_dirs = _software_protected_dirs_from_metadata(metadata)
+            if protected_dirs:
+                update_logger.info(
+                    "[步骤5] 软件增量更新保护目录: %s",
+                    [str(p) for p in protected_dirs],
+                )
+
+            update_logger.info(
+                f"[步骤5] 开始差异覆盖项目目录: {payload_root} -> {project_path}"
+            )
+            applied_count, skipped_count = _apply_hotfix_by_diff(
+                payload_root,
+                project_path,
+                protected_dirs,
+            )
+            update_logger.info(
+                "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个文件",
+                applied_count,
+                skipped_count,
+            )
+
+            if _update_interface_version(interface_paths, version):
+                update_logger.info("[步骤5] interface 配置同步完毕")
 
         # 步骤5: 完成
         update_logger.info("[步骤5] 热更新文件操作成功完成!")

@@ -534,6 +534,61 @@ class BaseUpdate(QThread):
             shutil.copytree(src, dst, dirs_exist_ok=True)
             shutil.rmtree(src)
 
+    def _iter_effective_entries(self, root: Path) -> list[Path]:
+        """列出用于判断更新类型的有效目录条目。"""
+        if not root.exists() or not root.is_dir():
+            return []
+        ignored_names = {"__MACOSX", ".DS_Store"}
+        entries = [
+            entry
+            for entry in root.iterdir()
+            if entry.name not in ignored_names and not entry.name.startswith("._")
+        ]
+        return sorted(entries, key=lambda item: item.name.lower())
+
+    def _resolve_payload_root(self, hotfix_root: Path) -> Path:
+        """解析热更包真实内容根目录，兼容单层包装目录。"""
+        payload_root = hotfix_root
+        for _ in range(2):
+            entries = self._iter_effective_entries(payload_root)
+            if len(entries) == 1 and entries[0].is_dir():
+                payload_root = entries[0]
+                continue
+            break
+        return payload_root
+
+    def _is_resource_package(self, payload_root: Path) -> bool:
+        """仅当内容物只包含 image 与 index 两个目录时判定为资源更新包。"""
+        entries = self._iter_effective_entries(payload_root)
+        if not entries:
+            return False
+        if any(not entry.is_dir() for entry in entries):
+            return False
+        entry_names = {entry.name.lower() for entry in entries}
+        return entry_names == {"image", "index"}
+
+    def _apply_resource_hotfix(self, payload_root: Path, project_path: Path) -> tuple[int, int, int, int]:
+        """应用资源更新包：image -> resource/base/image，index -> resource/index。"""
+        image_src = payload_root / "image"
+        index_src = payload_root / "index"
+        if not image_src.is_dir() or not index_src.is_dir():
+            raise FileNotFoundError(
+                f"资源更新包结构异常: image={image_src.is_dir()} index={index_src.is_dir()}"
+            )
+
+        image_dst = project_path / "resource" / "base" / "image"
+        index_dst = project_path / "resource" / "index"
+        image_dst.mkdir(parents=True, exist_ok=True)
+        index_dst.mkdir(parents=True, exist_ok=True)
+
+        logger.info("[步骤5][资源更新] 开始增量覆盖 image: %s -> %s", image_src, image_dst)
+        image_applied, image_skipped = self._apply_hotfix_by_diff(image_src, image_dst)
+
+        logger.info("[步骤5][资源更新] 开始覆盖 index: %s -> %s", index_src, index_dst)
+        index_applied, index_skipped = self._apply_hotfix_by_diff(index_src, index_dst)
+
+        return image_applied, image_skipped, index_applied, index_skipped
+
     def _file_sha256(self, file_path: Path) -> str:
         digest = hashlib.sha256()
         with open(file_path, "rb") as f:
@@ -633,6 +688,26 @@ class BaseUpdate(QThread):
             Path("resource/base/image/ar"),
             Path("resource/base/image/character"),
         ]
+
+    def _sync_interface_version(self, bundle_path_obj: Path, version: str | None) -> bool:
+        """同步 interface 版本号，仅用于应用更新。"""
+        interface_paths = [
+            bundle_path_obj / "interface.jsonc",
+            bundle_path_obj / "interface.json",
+        ]
+        for path in interface_paths:
+            if not path.exists():
+                continue
+            interface = self._read_config(str(path))
+            if not interface:
+                continue
+            interface["version"] = version
+            with open(path, "w", encoding="utf-8") as f:
+                jsonc.dump(interface, f, indent=4, ensure_ascii=False)
+            logger.info("[步骤5] 更新 %s 成功", path.name)
+            return True
+        logger.warning("[步骤5] 未找到可写入的 interface 文件，跳过版本号同步")
+        return False
 
     def _write_update_metadata(
         self,
@@ -1574,10 +1649,16 @@ class Update(BaseUpdate):
                 logger.error("[步骤4] 解压更新包失败")
                 return self._stop_with_notice(2)
             logger.info("[步骤4] 更新包解压完成: %s", hotfix_root)
-            self._normalize_hotfix_resource_layout(hotfix_root)
-            logger.debug("[步骤4] 已完成资源目录布局归并")
-            self._normalize_hotfix_resource_layout(hotfix_root)
-            logger.debug("[步骤4] 已完成资源目录布局归并")
+            payload_root = self._resolve_payload_root(hotfix_root)
+            resource_package = self._is_resource_package(payload_root)
+            logger.info(
+                "[步骤4] 更新包类型判定: %s (payload=%s)",
+                "资源更新" if resource_package else "应用更新",
+                payload_root,
+            )
+            if not resource_package:
+                self._normalize_hotfix_resource_layout(payload_root)
+                logger.debug("[步骤4] 已完成应用更新资源目录布局归并")
 
             # 获取 bundle 路径
             bundle_path = self._get_bundle_path()
@@ -1593,51 +1674,54 @@ class Update(BaseUpdate):
                 logger.error("[步骤5] hotfix 目录不存在，无法覆盖")
                 return self._stop_with_notice(2)
 
-            removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
-                hotfix_root,
-                project_path,
-            )
-            if removed_pipeline_dirs:
+            if resource_package:
+                image_applied, image_skipped, index_applied, index_skipped = (
+                    self._apply_resource_hotfix(payload_root, project_path)
+                )
                 logger.info(
-                    "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
-                    removed_pipeline_dirs,
+                    "[步骤5][资源更新] 差异应用完成: image 应用 %s 跳过 %s, index 应用 %s 跳过 %s",
+                    image_applied,
+                    image_skipped,
+                    index_applied,
+                    index_skipped,
+                )
+                logger.info("[步骤5][资源更新] 跳过 interface 版本号同步")
+            else:
+                removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
+                    payload_root,
+                    project_path,
+                )
+                if removed_pipeline_dirs:
+                    logger.info(
+                        "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
+                        removed_pipeline_dirs,
+                    )
+
+                logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
+                protected_dirs: list[Path] | None = None
+                if self.update_target == "software":
+                    protected_dirs = self._software_protected_dirs()
+                    logger.info(
+                        "[步骤5] 软件增量更新保护目录: %s",
+                        [str(p) for p in protected_dirs],
+                    )
+
+                applied_count, skipped_count = self._apply_hotfix_by_diff_with_protection(
+                    payload_root,
+                    project_path,
+                    protected_dirs,
+                )
+                logger.info(
+                    "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
+                    applied_count,
+                    skipped_count,
                 )
 
-            logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-            protected_dirs: list[Path] | None = None
-            if self.update_target == "software":
-                protected_dirs = self._software_protected_dirs()
-                logger.info(
-                    "[步骤5] 软件增量更新保护目录: %s",
-                    [str(p) for p in protected_dirs],
-                )
-
-            applied_count, skipped_count = self._apply_hotfix_by_diff_with_protection(
-                hotfix_root,
-                project_path,
-                protected_dirs,
-            )
-            logger.info(
-                "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
-                applied_count,
-                skipped_count,
-            )
-
-            interface_path = [
-                bundle_path_obj / "interface.jsonc",
-                bundle_path_obj / "interface.json",
-            ]
-
-            for path in interface_path:
-                if path.exists():
-                    interface = self._read_config(str(path))
-                    if interface:
-                        interface["version"] = self.latest_update_version
-                        with open(path, "w", encoding="utf-8") as f:
-                            jsonc.dump(interface, f, indent=4, ensure_ascii=False)
-                        logger.info("[步骤5] 更新 interface.jsonc 成功")
-                        break
-            logger.info("[步骤5] interface 配置同步完毕")
+                if self._sync_interface_version(
+                    bundle_path_obj,
+                    self.latest_update_version,
+                ):
+                    logger.info("[步骤5] interface 配置同步完毕")
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
             logger.info("=" * 50)
@@ -2574,6 +2658,16 @@ class MultiResourceUpdate(Update):
                 logger.error("[步骤4] 解压更新包失败")
                 return self._stop_with_notice(2)
             logger.info("[步骤4] 更新包解压完成: %s", hotfix_root)
+            payload_root = self._resolve_payload_root(hotfix_root)
+            resource_package = self._is_resource_package(payload_root)
+            logger.info(
+                "[步骤4] 更新包类型判定: %s (payload=%s)",
+                "资源更新" if resource_package else "应用更新",
+                payload_root,
+            )
+            if not resource_package:
+                self._normalize_hotfix_resource_layout(payload_root)
+                logger.debug("[步骤4] 已完成应用更新资源目录布局归并")
 
             # 获取 bundle 路径
             bundle_path = self._get_bundle_path()
@@ -2590,42 +2684,45 @@ class MultiResourceUpdate(Update):
                 logger.error("[步骤5] hotfix 目录不存在，无法覆盖")
                 return self._stop_with_notice(2)
 
-            removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
-                hotfix_root,
-                project_path,
-            )
-            if removed_pipeline_dirs:
+            if resource_package:
+                image_applied, image_skipped, index_applied, index_skipped = (
+                    self._apply_resource_hotfix(payload_root, project_path)
+                )
                 logger.info(
-                    "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
-                    removed_pipeline_dirs,
+                    "[步骤5][资源更新] 差异应用完成: image 应用 %s 跳过 %s, index 应用 %s 跳过 %s",
+                    image_applied,
+                    image_skipped,
+                    index_applied,
+                    index_skipped,
+                )
+                logger.info("[步骤5][资源更新] 跳过 interface 版本号同步")
+            else:
+                removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
+                    payload_root,
+                    project_path,
+                )
+                if removed_pipeline_dirs:
+                    logger.info(
+                        "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
+                        removed_pipeline_dirs,
+                    )
+
+                logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
+                applied_count, skipped_count = self._apply_hotfix_by_diff(
+                    payload_root,
+                    project_path,
+                )
+                logger.info(
+                    "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
+                    applied_count,
+                    skipped_count,
                 )
 
-            logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-            applied_count, skipped_count = self._apply_hotfix_by_diff(
-                hotfix_root,
-                project_path,
-            )
-            logger.info(
-                "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
-                applied_count,
-                skipped_count,
-            )
-
-            interface_path = [
-                bundle_path_obj / "interface.jsonc",
-                bundle_path_obj / "interface.json",
-            ]
-
-            for path in interface_path:
-                if path.exists():
-                    interface = self._read_config(str(path))
-                    if interface:
-                        interface["version"] = self.latest_update_version
-                        with open(path, "w", encoding="utf-8") as f:
-                            jsonc.dump(interface, f, indent=4, ensure_ascii=False)
-                        logger.info("[步骤5] 更新 interface.jsonc 成功")
-                        break
-            logger.info("[步骤5] interface 配置同步完毕")
+                if self._sync_interface_version(
+                    bundle_path_obj,
+                    self.latest_update_version,
+                ):
+                    logger.info("[步骤5] interface 配置同步完毕")
 
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
