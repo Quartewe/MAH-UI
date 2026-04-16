@@ -709,6 +709,34 @@ class BaseUpdate(QThread):
         logger.warning("[步骤5] 未找到可写入的 interface 文件，跳过版本号同步")
         return False
 
+    def _sync_interface_resource_version(
+        self, bundle_path_obj: Path, version: str | None
+    ) -> bool:
+        """同步 interface 资源版本号，用于资源更新。"""
+        interface_paths = [
+            bundle_path_obj / "interface.jsonc",
+            bundle_path_obj / "interface.json",
+        ]
+        for path in interface_paths:
+            if not path.exists():
+                continue
+            interface = self._read_config(str(path))
+            if not interface:
+                continue
+            old_version = interface.get("resource_version", interface.get("version", "unknown"))
+            interface["resource_version"] = version
+            with open(path, "w", encoding="utf-8") as f:
+                jsonc.dump(interface, f, indent=4, ensure_ascii=False)
+            logger.info(
+                "[步骤5] 更新 %s 资源版本成功 (%s -> %s)",
+                path.name,
+                old_version,
+                version,
+            )
+            return True
+        logger.warning("[步骤5] 未找到可写入的 interface 文件，跳过资源版本号同步")
+        return False
+
     def _write_update_metadata(
         self,
         download_dir: Path,
@@ -1192,7 +1220,14 @@ class Update(BaseUpdate):
         # 从 interface 中获取参数
         self.interface = interface or {}
         self.project_name = self.interface.get("name", "")
-        self.current_version = self.interface.get("version", "v1.0.0")
+        if self.update_target == "resource":
+            current_version_raw = self.interface.get(
+                "resource_version",
+                self.interface.get("version", "v1.0.0"),
+            )
+        else:
+            current_version_raw = self.interface.get("version", "v1.0.0")
+        self.current_version = str(current_version_raw or "v1.0.0")
         if not self.current_version.startswith("v"):
             self.current_version = "v" + self.current_version
         self.software_url = self.interface.get(
@@ -1685,7 +1720,13 @@ class Update(BaseUpdate):
                     index_applied,
                     index_skipped,
                 )
-                logger.info("[步骤5][资源更新] 跳过 interface 版本号同步")
+                if self._sync_interface_resource_version(
+                    bundle_path_obj,
+                    self.latest_update_version,
+                ):
+                    logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
+                else:
+                    logger.warning("[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本")
             else:
                 removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
                     payload_root,
@@ -2695,7 +2736,13 @@ class MultiResourceUpdate(Update):
                     index_applied,
                     index_skipped,
                 )
-                logger.info("[步骤5][资源更新] 跳过 interface 版本号同步")
+                if self._sync_interface_resource_version(
+                    bundle_path_obj,
+                    self.latest_update_version,
+                ):
+                    logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
+                else:
+                    logger.warning("[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本")
             else:
                 removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
                     payload_root,

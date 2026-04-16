@@ -1674,6 +1674,32 @@ def _update_interface_version(interface_paths: list[Path], version: str) -> bool
     return False
 
 
+def _update_interface_resource_version(interface_paths: list[Path], version: str) -> bool:
+    update_logger.info(f"[步骤5] 开始更新 interface 配置文件中的资源版本号为: {version}")
+    for path in interface_paths:
+        if not path.exists():
+            continue
+        interface = _read_config_file(str(path))
+        if not interface:
+            continue
+        old_version = interface.get("resource_version", interface.get("version", "unknown"))
+        interface["resource_version"] = version
+        try:
+            import jsonc
+
+            with open(path, "w", encoding="utf-8") as f:
+                jsonc.dump(interface, f, indent=4, ensure_ascii=False)
+        except ImportError:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(interface, f, indent=4, ensure_ascii=False)
+        update_logger.info(
+            f"[步骤5] 资源版本号更新成功: {path.name} ({old_version} -> {version})"
+        )
+        return True
+    update_logger.warning("[步骤5] 未能更新 interface 配置文件中的资源版本号")
+    return False
+
+
 def _rollback_resource_backups(resource_backups: list[tuple[Path, Path]]) -> None:
     if not resource_backups:
         update_logger.warning("[步骤5] 没有需要恢复的资源备份")
@@ -1794,7 +1820,11 @@ def apply_github_hotfix(package_path, metadata=None):
                 index_applied,
                 index_skipped,
             )
-            update_logger.info("[步骤5][资源更新] 跳过 interface 版本号更新")
+            interface_paths, _ = _load_interface_data(bundle_path_obj)
+            if _update_interface_resource_version(interface_paths, version):
+                update_logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
+            else:
+                update_logger.warning("[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本")
         else:
             update_logger.info("[步骤5] 读取 interface 配置文件...")
             interface_paths, interface_data = _load_interface_data(bundle_path_obj)
