@@ -3127,7 +3127,9 @@ class MainWindow(MSFluentWindow):
         """设置窗口标题"""
         meta = self.service_coordinator.task.interface or {}
         resource_name = str(meta.get("name", "") or "").strip()
-        resource_version = str(meta.get("version", "") or "").strip()
+        resource_version = str(
+            meta.get("resource_version", meta.get("version", "")) or ""
+        ).strip()
         title_template = str(
             meta.get("title", "") or meta.get("custom_title", "") or ""
         ).strip()
@@ -3150,15 +3152,28 @@ class MainWindow(MSFluentWindow):
         else:
             base_title = f"{resource_name} {resource_version}".strip()
 
-        if cfg.get(cfg.multi_resource_adaptation):
-            from app.common.__version__ import __version__
+        # 若自定义标题未包含资源版本，追加显示，确保顶部可见资源版本。
+        if resource_version and resource_version.lower() not in base_title.lower():
+            base_title = (
+                f"{base_title} - {resource_version}".strip(" -")
+                if base_title
+                else resource_version
+            )
 
-            # 多资源模式下：显示应用名 + 应用版本 + 资源标题
-            prefix = f"{self.tr('MFW-ChainFlow Assistant')} {__version__}"
-            title = f"{prefix} {base_title}".strip()
+        from app.common.__version__ import __version__
+
+        app_display_name = self.tr("MFW-ChainFlow Assistant")
+        if getattr(sys, "frozen", False):
+            exe_name = Path(sys.argv[0]).stem.strip()
+            if exe_name:
+                app_display_name = exe_name
+
+        # 顶部标题统一为：应用版本 - 资源标题（资源标题内已包含资源版本）。
+        prefix = f"{app_display_name} {__version__}".strip()
+        title = f"{prefix} - {base_title}".strip(" -")
+
+        if cfg.get(cfg.multi_resource_adaptation):
             self.setWindowIcon(QIcon("./app/assets/icons/logo.png"))
-        else:
-            title = base_title
 
         # 刷新运行时标记：是否为管理员权限（供其他界面快速读取）
         try:

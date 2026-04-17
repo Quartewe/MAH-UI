@@ -9,6 +9,7 @@ import os
 import re
 from time import perf_counter
 from pathlib import Path
+from html import escape
 from typing import Any, Callable, Dict, Optional
 
 from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QPropertyAnimation, QEasingCurve
@@ -545,6 +546,10 @@ class SettingInterface(QWidget):
         self._update_checker: Optional[Update] = None
         self._resource_update_checker: Optional[Update] = None
         self._latest_update_check_result: str | bool | None = None
+        self._has_software_update = False
+        self._has_resource_update = False
+        self._latest_software_update_version = ""
+        self._latest_resource_update_version = ""
         self._updater_started = False
         self._local_update_package: Path | None = None
         self._local_update_metadata: Dict[str, Any] | None = None
@@ -713,6 +718,8 @@ class SettingInterface(QWidget):
         # 版本信息统一放到一行里展示：当前版本 / 最新版本 / UI版本 / MaaFW版本
         self.version_label = BodyLabel("", self)
         self.version_label.setStyleSheet("color: rgba(255, 255, 255, 0.7);")
+        self.version_label.setTextFormat(Qt.TextFormat.RichText)
+        self.version_label.setWordWrap(True)
 
         self.detail_progress = QProgressBar(self)
         self.detail_progress.setRange(0, 100)
@@ -1964,25 +1971,40 @@ class SettingInterface(QWidget):
         from maa.library import Library
 
         maafw_version = Library.version()
-        self.version_label.setText(
-            self.tr("Resource version: ")
-            + str(resource_version)
-            + "    "
-            + self.tr("Latest resource version: ")
-            + str(latest_resource_version)
-            + "    "
-            + self.tr("Current version: ")
-            + str(mah_current_version)
-            + "    "
-            + self.tr("Latest version: ")
-            + str(mah_latest_version)
-            + "    "
-            + self.tr("UI version: ")
-            + str(UI_VERSION)
-            + "    "
-            + self.tr("MaaFW version: ")
-            + maafw_version
-        )
+        line_parts = [
+            self.tr("Resource version: ") + str(resource_version),
+            self.tr("Latest resource version: ") + str(latest_resource_version),
+            self.tr("Current version: ") + str(mah_current_version),
+            self.tr("Latest version: ") + str(mah_latest_version),
+            self.tr("UI version: ") + str(UI_VERSION),
+            self.tr("MaaFW version: ") + str(maafw_version),
+        ]
+        spacer = "&nbsp;&nbsp;&nbsp;&nbsp;"
+        base_line_html = spacer.join(escape(part) for part in line_parts)
+
+        update_notices: list[str] = []
+        if self._has_resource_update:
+            update_notices.append(
+                self._build_update_notice_html(
+                    "资源更新: ",
+                    self._latest_resource_update_version
+                    or str(latest_resource_version),
+                )
+            )
+        if self._has_software_update:
+            update_notices.append(
+                self._build_update_notice_html(
+                    "本体更新: ",
+                    self._latest_software_update_version or str(mah_latest_version),
+                )
+            )
+
+        if update_notices:
+            self.version_label.setText(
+                base_line_html + "<br/>" + spacer.join(update_notices)
+            )
+        else:
+            self.version_label.setText(base_line_html)
         self._apply_markdown_to_label(self.description_label, description)
         self._apply_markdown_to_label(
             self.contact_label, self._linkify_contact_urls(contact)
@@ -2025,13 +2047,34 @@ class SettingInterface(QWidget):
         from maa.library import Library
 
         maafw_version = Library.version()
-        self.version_label.setText(
-            self.tr("Current version: ")
-            + str(current_version)
-            + "    "
-            + self.tr("MaaFW version: ")
-            + maafw_version
+        spacer = "&nbsp;&nbsp;&nbsp;&nbsp;"
+        base_line_html = spacer.join(
+            [
+                escape(self.tr("Current version: ") + str(current_version)),
+                escape(self.tr("MaaFW version: ") + str(maafw_version)),
+            ]
         )
+
+        update_notices: list[str] = []
+        if self._has_software_update:
+            update_notices.append(
+                self._build_update_notice_html(
+                    "本体更新: ", self._latest_software_update_version
+                )
+            )
+        if self._has_resource_update:
+            update_notices.append(
+                self._build_update_notice_html(
+                    "资源更新: ", self._latest_resource_update_version
+                )
+            )
+
+        if update_notices:
+            self.version_label.setText(
+                base_line_html + "<br/>" + spacer.join(update_notices)
+            )
+        else:
+            self.version_label.setText(base_line_html)
         self._apply_markdown_to_label(self.description_label, description)
         self._apply_markdown_to_label(
             self.contact_label, self._linkify_contact_urls(contact)
@@ -2059,6 +2102,16 @@ class SettingInterface(QWidget):
             return {}
         interface_data = getattr(self._service_coordinator.task, "interface", None)
         return interface_data or {}
+
+    @staticmethod
+    def _build_update_notice_html(label: str, version: str) -> str:
+        """构造更新提醒红字 HTML。"""
+        return (
+            '<span style="color: #ff4d4f; font-weight: 600;">'
+            + escape(str(label or ""))
+            + escape(str(version or ""))
+            + "</span>"
+        )
 
     def _get_project_name(self) -> str:
         """获取当前项目名称，用于更新日志等功能。
@@ -3068,9 +3121,10 @@ class SettingInterface(QWidget):
         latest_version = result.get("latest_update_version") or cfg.get(
             cfg.latest_update_version
         )
-        if latest_version:
-            # 无论是否发现新版本，都同步显示最新的版本号
-            self._refresh_update_header()
+        self._has_software_update = bool(result.get("enable"))
+        self._latest_software_update_version = str(latest_version or "")
+        # 无论是否发现新版本，都同步刷新展示（用于更新红字状态）。
+        self._refresh_update_header()
 
         if not result.get("enable"):
             return
@@ -3090,8 +3144,9 @@ class SettingInterface(QWidget):
         latest_resource_version = result.get("latest_update_version") or cfg.get(
             cfg.latest_resource_update_version
         )
-        if latest_resource_version:
-            self._refresh_update_header()
+        self._has_resource_update = bool(result.get("enable"))
+        self._latest_resource_update_version = str(latest_resource_version or "")
+        self._refresh_update_header()
 
     def _save_release_note(self, version: str, content: str):
         """保存更新日志到文件"""
