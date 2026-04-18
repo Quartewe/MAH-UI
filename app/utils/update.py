@@ -59,6 +59,31 @@ class BaseUpdate(QThread):
     stop_flag = False
     channel_map = {0: "stable", 1: "beta", 2: "alpha"}
 
+    @staticmethod
+    def _is_semantic_version_like(value: str) -> bool:
+        return bool(
+            re.match(
+                r"^v?\d+(?:\.\d+){1,3}(?:[-._][0-9A-Za-z]+)*$",
+                str(value or "").strip(),
+                re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _version_equals(cls, left: str, right: str) -> bool:
+        left_text = str(left or "").strip()
+        right_text = str(right or "").strip()
+        if not left_text or not right_text:
+            return left_text == right_text
+
+        # 语义化版本支持可选 v 前缀；自定义文本版本保持原样比较。
+        if cls._is_semantic_version_like(left_text) and cls._is_semantic_version_like(
+            right_text
+        ):
+            return left_text.lower().lstrip("v") == right_text.lower().lstrip("v")
+
+        return left_text.lower() == right_text.lower()
+
     def get_proxy_data(self) -> dict | None:
         proxy_value = cfg.get(cfg.http_proxy)
         scheme = {0: "http", 1: "socks5"}.get(cfg.get(cfg.proxy))
@@ -981,7 +1006,7 @@ class BaseUpdate(QThread):
         cdk_expired_time = data.get("cdk_expired_time")
         if isinstance(cdk_expired_time, int) and cdk_expired_time > 0:
             cfg.set(cfg.cdk_expired_time, cdk_expired_time)
-        if data is not None and data.get("version_name") == version:
+        if data is not None and self._version_equals(data.get("version_name", ""), version):
             return {"status": "no_need", "msg": self.tr("current version is latest")}
         return mirror_data
 
@@ -1005,7 +1030,7 @@ class BaseUpdate(QThread):
                 logger.error(error_msg)
                 return {"status": "failed", "msg": error_msg}
 
-            if update_dict.get("tag_name", None) == version:
+            if self._version_equals(update_dict.get("tag_name", None), version):
                 logger.info("当前已是最新版本")
                 return {
                     "status": "no_need",
@@ -1254,8 +1279,6 @@ class Update(BaseUpdate):
                 )
                 self.current_version = str(fallback_version or "v1.0.0")
 
-        if not self.current_version.startswith("v"):
-            self.current_version = "v" + self.current_version
         self.software_url = self.interface.get(
             "software_github",
             self.interface.get("github", self.interface.get("url", "")),
