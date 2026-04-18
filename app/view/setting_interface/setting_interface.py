@@ -736,22 +736,23 @@ class SettingInterface(QWidget):
         version_column = QVBoxLayout()
         version_column.setSpacing(4)
         version_column.addWidget(self.version_label)
-        version_layout.addLayout(version_column)
+        version_layout.addLayout(version_column, 1)
         self.detail_progress_placeholder = QWidget(self)
         self.detail_progress_placeholder.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
         self.detail_progress_placeholder.setFixedHeight(self.detail_progress.height())
         self.detail_progress_container = QWidget(self)
         self.detail_progress_container.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
+        self.detail_progress_container.setMaximumWidth(260)
         self.detail_progress_stack = QStackedLayout(self.detail_progress_container)
         self.detail_progress_stack.setContentsMargins(0, 0, 0, 0)
         self.detail_progress_stack.addWidget(self.detail_progress_placeholder)
         self.detail_progress_stack.addWidget(self.detail_progress)
         self.detail_progress_stack.setCurrentWidget(self.detail_progress_placeholder)
-        version_layout.addWidget(self.detail_progress_container, 1)
+        version_layout.addWidget(self.detail_progress_container, 0)
         header_layout.addLayout(version_layout)
 
         detail_row = QHBoxLayout()
@@ -1971,16 +1972,29 @@ class SettingInterface(QWidget):
         from maa.library import Library
 
         maafw_version = Library.version()
-        line_parts = [
-            self.tr("Resource version: ") + str(resource_version),
-            self.tr("Latest resource version: ") + str(latest_resource_version),
-            self.tr("Current version: ") + str(mah_current_version),
-            self.tr("Latest version: ") + str(mah_latest_version),
-            self.tr("UI version: ") + str(UI_VERSION),
-            self.tr("MaaFW version: ") + str(maafw_version),
-        ]
-        spacer = "&nbsp;&nbsp;&nbsp;&nbsp;"
-        base_line_html = spacer.join(escape(part) for part in line_parts)
+        separator_html = ' <span style="color: rgba(255, 255, 255, 0.45);">|</span> '
+        line1_html = separator_html.join(
+            [
+                escape(self.tr("Resource version: ") + str(resource_version)),
+                escape(
+                    self.tr("Latest resource version: ")
+                    + str(latest_resource_version)
+                ),
+            ]
+        )
+        line2_html = separator_html.join(
+            [
+                escape(self.tr("Current version: ") + str(mah_current_version)),
+                escape(self.tr("Latest version: ") + str(mah_latest_version)),
+            ]
+        )
+        line3_html = separator_html.join(
+            [
+                escape(self.tr("UI version: ") + str(UI_VERSION)),
+                escape(self.tr("MaaFW version: ") + str(maafw_version)),
+            ]
+        )
+        base_line_html = "<br/>".join([line1_html, line2_html, line3_html])
 
         update_notices: list[str] = []
         if self._has_resource_update:
@@ -2001,7 +2015,7 @@ class SettingInterface(QWidget):
 
         if update_notices:
             self.version_label.setText(
-                base_line_html + "<br/>" + spacer.join(update_notices)
+                base_line_html + "<br/>" + separator_html.join(update_notices)
             )
         else:
             self.version_label.setText(base_line_html)
@@ -2047,8 +2061,8 @@ class SettingInterface(QWidget):
         from maa.library import Library
 
         maafw_version = Library.version()
-        spacer = "&nbsp;&nbsp;&nbsp;&nbsp;"
-        base_line_html = spacer.join(
+        separator_html = ' <span style="color: rgba(255, 255, 255, 0.45);">|</span> '
+        base_line_html = separator_html.join(
             [
                 escape(self.tr("Current version: ") + str(current_version)),
                 escape(self.tr("MaaFW version: ") + str(maafw_version)),
@@ -2071,7 +2085,7 @@ class SettingInterface(QWidget):
 
         if update_notices:
             self.version_label.setText(
-                base_line_html + "<br/>" + spacer.join(update_notices)
+                base_line_html + "<br/>" + separator_html.join(update_notices)
             )
         else:
             self.version_label.setText(base_line_html)
@@ -2194,7 +2208,6 @@ class SettingInterface(QWidget):
 
     def _on_update_ui_clicked(self) -> None:
         """更新 UI 按钮点击回调，占位接口，后续可在此实现 UI 更新逻辑。"""
-        # TODO: 在此处实现 UI 更新的具体行为（如检查并更新前端资源等）
         signalBus.info_bar_requested.emit(
             "info",
             self.tr("UI update feature is not implemented yet."),
