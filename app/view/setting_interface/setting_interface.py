@@ -1957,6 +1957,18 @@ class SettingInterface(QWidget):
         # 保存项目名称，用于更新日志等功能
         self.name = name if name else "MFW_CFA"
         mah_current_version = metadata.get("version", "0.0.1")
+        version_pattern = re.compile(
+            r"^v?\d+(?:\.\d+){1,3}(?:[-._][0-9A-Za-z]+)*$",
+            re.IGNORECASE,
+        )
+        if not version_pattern.match(str(mah_current_version or "")):
+            fallback_version = cfg.get(cfg.latest_update_version) or UI_VERSION
+            logger.warning(
+                "检测到异常构建版本显示值: %s，回退展示为 %s",
+                mah_current_version,
+                fallback_version,
+            )
+            mah_current_version = str(fallback_version or "0.0.1")
         resource_version = metadata.get("resource_version", mah_current_version)
         mah_latest_version = cfg.get(cfg.latest_update_version) or mah_current_version
         latest_resource_version = (

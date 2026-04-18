@@ -558,14 +558,16 @@ class BaseUpdate(QThread):
         return payload_root
 
     def _is_resource_package(self, payload_root: Path) -> bool:
-        """仅当内容物只包含 image 与 index 两个目录时判定为资源更新包。"""
+        """判定资源更新包。
+
+        历史上资源包可能在根目录附带说明文件（如 README / LICENSE），
+        此处仅要求存在 image 与 index 两个目录，不再因额外文件误判为应用更新。
+        """
         entries = self._iter_effective_entries(payload_root)
         if not entries:
             return False
-        if any(not entry.is_dir() for entry in entries):
-            return False
-        entry_names = {entry.name.lower() for entry in entries}
-        return entry_names == {"image", "index"}
+        dir_names = {entry.name.lower() for entry in entries if entry.is_dir()}
+        return {"image", "index"}.issubset(dir_names)
 
     def _apply_resource_hotfix(self, payload_root: Path, project_path: Path) -> tuple[int, int, int, int]:
         """应用资源更新包：image -> resource/base/image，index -> resource/index。"""
@@ -1228,6 +1230,30 @@ class Update(BaseUpdate):
         else:
             current_version_raw = self.interface.get("version", "v1.0.0")
         self.current_version = str(current_version_raw or "v1.0.0")
+
+        # 若软件版本号被历史异常写成资源标签（如“约会任务#260414”），
+        # 回退到已知软件版本，避免每次启动都误判“发现新版本”。
+        if self.update_target == "software":
+            version_pattern = re.compile(
+                r"^v?\d+(?:\.\d+){1,3}(?:[-._][0-9A-Za-z]+)*$",
+                re.IGNORECASE,
+            )
+            if not version_pattern.match(self.current_version):
+                fallback_version = cfg.get(cfg.latest_update_version)
+                if not fallback_version:
+                    try:
+                        from app.common.__version__ import __version__ as ui_version
+
+                        fallback_version = ui_version
+                    except Exception:
+                        fallback_version = "v1.0.0"
+                logger.warning(
+                    "检测到异常软件版本号: %s，回退到 %s",
+                    self.current_version,
+                    fallback_version,
+                )
+                self.current_version = str(fallback_version or "v1.0.0")
+
         if not self.current_version.startswith("v"):
             self.current_version = "v" + self.current_version
         self.software_url = self.interface.get(
@@ -1758,11 +1784,22 @@ class Update(BaseUpdate):
                     skipped_count,
                 )
 
-                if self._sync_interface_version(
-                    bundle_path_obj,
-                    self.latest_update_version,
-                ):
-                    logger.info("[步骤5] interface 配置同步完毕")
+                if self.update_target == "resource":
+                    if self._sync_interface_resource_version(
+                        bundle_path_obj,
+                        self.latest_update_version,
+                    ):
+                        logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
+                    else:
+                        logger.warning(
+                            "[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本"
+                        )
+                else:
+                    if self._sync_interface_version(
+                        bundle_path_obj,
+                        self.latest_update_version,
+                    ):
+                        logger.info("[步骤5] interface 配置同步完毕")
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
             logger.info("=" * 50)
@@ -2765,11 +2802,22 @@ class MultiResourceUpdate(Update):
                     skipped_count,
                 )
 
-                if self._sync_interface_version(
-                    bundle_path_obj,
-                    self.latest_update_version,
-                ):
-                    logger.info("[步骤5] interface 配置同步完毕")
+                if self.update_target == "resource":
+                    if self._sync_interface_resource_version(
+                        bundle_path_obj,
+                        self.latest_update_version,
+                    ):
+                        logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
+                    else:
+                        logger.warning(
+                            "[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本"
+                        )
+                else:
+                    if self._sync_interface_version(
+                        bundle_path_obj,
+                        self.latest_update_version,
+                    ):
+                        logger.info("[步骤5] interface 配置同步完毕")
 
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
