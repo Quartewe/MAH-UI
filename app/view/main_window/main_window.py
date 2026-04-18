@@ -468,6 +468,12 @@ class MainWindow(MSFluentWindow):
         self._startup_cleanup_scheduled = (
             False  # 启动完成后清理旧图片/旧文件，仅执行一次
         )
+        self._title_segments: list[tuple[str, bool]] = []
+        self._title_suffix_text = ""
+        self._title_rgb_hue = 0
+        self._title_rgb_timer = QTimer(self)
+        self._title_rgb_timer.setInterval(90)
+        self._title_rgb_timer.timeout.connect(self._on_title_rgb_tick)
 
         cfg.set(cfg.save_screenshot, False)
         cfg.set(cfg.show_advanced_startup_options, False)
@@ -3126,41 +3132,41 @@ class MainWindow(MSFluentWindow):
     def set_title(self):
         """设置窗口标题"""
         meta = self.service_coordinator.task.interface or {}
-        resource_name = str(meta.get("name", "") or "").strip()
-        resource_version = str(
-            meta.get("resource_version", meta.get("version", "")) or ""
-        ).strip()
-        title_template = str(
-            meta.get("title", "") or meta.get("custom_title", "") or ""
-        ).strip()
-
-        if title_template:
-            base_title = title_template
-            if resource_version:
-                # 兼容历史标题写死版本号的情况，例如 "MAH v1.0.0"。
-                version_pattern = re.compile(
-                    r"v?\d+(?:\.\d+){1,3}(?:[-._][0-9A-Za-z]+)*",
-                    re.IGNORECASE,
-                )
-                matched = version_pattern.search(title_template)
-                if matched:
-                    old_version = matched.group(0)
-                    if old_version.lower() != resource_version.lower():
-                        base_title = (
-                            f"{title_template[:matched.start()]}{resource_version}{title_template[matched.end():]}"
-                        ).strip()
-        else:
-            base_title = f"{resource_name} {resource_version}".strip()
-
-        # 若自定义标题未包含资源版本，追加显示，确保顶部可见资源版本。
-        if resource_version and resource_version.lower() not in base_title.lower():
-            base_title = (
-                f"{base_title} - {resource_version}".strip(" -")
-                if base_title
-                else resource_version
-            )
-
         from app.common.__version__ import __version__
+
+        app_name = str(meta.get("name", "") or "").strip()
+        app_version = str(__version__ or "").strip()
+        resource_version = str(meta.get("resource_version", "") or "").strip()
+
+        if not resource_version:
+            resource_version = str(meta.get("version", "") or "").strip()
+
+        if app_version and not app_version.lower().startswith("v"):
+            app_version = f"v{app_version}"
+        if resource_version and not resource_version.lower().startswith("v"):
+            resource_version = f"v{resource_version}"
+
+        app_version_display = app_version
+        resource_version_display = resource_version
+
+        # 若检测到可更新版本，标题对应区域优先显示“xx更新: 新版本号”。
+        setting_interface = getattr(self, "SettingInterface", None)
+        if setting_interface is not None:
+            latest_software_version = str(
+                getattr(setting_interface, "_latest_software_update_version", "") or ""
+            ).strip()
+            if latest_software_version and not latest_software_version.lower().startswith("v"):
+                latest_software_version = f"v{latest_software_version}"
+            if bool(getattr(setting_interface, "_has_software_update", False)) and latest_software_version:
+                app_version_display = f"本体更新: {latest_software_version}"
+
+            latest_resource_version = str(
+                getattr(setting_interface, "_latest_resource_update_version", "") or ""
+            ).strip()
+            if latest_resource_version and not latest_resource_version.lower().startswith("v"):
+                latest_resource_version = f"v{latest_resource_version}"
+            if bool(getattr(setting_interface, "_has_resource_update", False)) and latest_resource_version:
+                resource_version_display = f"资源更新: {latest_resource_version}"
 
         app_display_name = self.tr("MFW-ChainFlow Assistant")
         if getattr(sys, "frozen", False):
@@ -3168,9 +3174,24 @@ class MainWindow(MSFluentWindow):
             if exe_name:
                 app_display_name = exe_name
 
-        # 顶部标题统一为：应用版本 - 资源标题（资源标题内已包含资源版本）。
-        prefix = f"{app_display_name} {__version__}".strip()
-        title = f"{prefix} - {base_title}".strip(" -")
+        if not app_name:
+            app_name = app_display_name
+
+        app_has_update = app_version_display.startswith("本体更新:")
+        resource_has_update = resource_version_display.startswith("资源更新:")
+        display_parts: list[tuple[str, bool]] = []
+        if app_name:
+            display_parts.append((app_name, False))
+        if app_version_display:
+            display_parts.append((app_version_display, app_has_update))
+        if resource_version_display:
+            display_parts.append((resource_version_display, resource_has_update))
+        self._title_segments = display_parts
+        self._title_suffix_text = ""
+
+        # 顶部标题统一为：项目名 - 本体版本 - 资源版本。
+        title_parts = [part for part, _highlight in self._title_segments]
+        title = " - ".join(part for part in title_parts if part)
 
         if cfg.get(cfg.multi_resource_adaptation):
             self.setWindowIcon(QIcon("./app/assets/icons/logo.png"))
@@ -3183,9 +3204,69 @@ class MainWindow(MSFluentWindow):
             admin = bool(self.is_admin())
 
         if admin:
-            title += " " + self.tr("admin")
+            self._title_suffix_text = self.tr("admin")
+            title += " " + self._title_suffix_text
+
+        has_update_highlight = any(highlight for _part, highlight in self._title_segments)
+        if has_update_highlight:
+            if not self._title_rgb_timer.isActive():
+                self._title_rgb_timer.start()
+        elif self._title_rgb_timer.isActive():
+            self._title_rgb_timer.stop()
+
         logger.info(f" 设置窗口标题：{title}")
         self.setWindowTitle(title)
+        self._render_title_label_with_dynamic_rgb()
+
+    @staticmethod
+    def _escape_html_text(value: str) -> str:
+        return (
+            str(value or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;")
+        )
+
+    def _render_title_label_with_dynamic_rgb(self) -> None:
+        """在支持自绘标题栏时，为更新提示文本渲染动态 RGB 颜色。"""
+        title_bar = getattr(self, "titleBar", None)
+        title_label = getattr(title_bar, "titleLabel", None) if title_bar else None
+        if title_label is None:
+            return
+
+        has_update_highlight = any(highlight for _part, highlight in self._title_segments)
+        if not has_update_highlight:
+            title_label.setTextFormat(Qt.TextFormat.PlainText)
+            title_label.setText(self.windowTitle())
+            return
+
+        color_hex = QColor.fromHsv(self._title_rgb_hue % 360, 255, 255).name()
+        segment_html: list[str] = []
+        for part, highlight in self._title_segments:
+            escaped = self._escape_html_text(part)
+            if highlight:
+                segment_html.append(
+                    f"<span style='color:{color_hex}; font-weight:600;'>{escaped}</span>"
+                )
+            else:
+                segment_html.append(escaped)
+
+        title_html = " - ".join(segment_html)
+        if self._title_suffix_text:
+            title_html += f" {self._escape_html_text(self._title_suffix_text)}"
+
+        title_label.setTextFormat(Qt.TextFormat.RichText)
+        title_label.setText(title_html)
+
+    def _on_title_rgb_tick(self) -> None:
+        if not any(highlight for _part, highlight in self._title_segments):
+            if self._title_rgb_timer.isActive():
+                self._title_rgb_timer.stop()
+            return
+        self._title_rgb_hue = (self._title_rgb_hue + 7) % 360
+        self._render_title_label_with_dynamic_rgb()
 
     def resizeEvent(self, e):
         """重写尺寸事件。"""
@@ -3208,6 +3289,9 @@ class MainWindow(MSFluentWindow):
 
     def closeEvent(self, e):
         """关闭事件"""
+        if hasattr(self, "_title_rgb_timer") and self._title_rgb_timer.isActive():
+            self._title_rgb_timer.stop()
+
         self._save_window_geometry_if_needed()
 
         # 清理托盘图标，避免 Windows 托盘残影

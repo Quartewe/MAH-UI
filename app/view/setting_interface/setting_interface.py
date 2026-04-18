@@ -3125,6 +3125,7 @@ class SettingInterface(QWidget):
         self._latest_software_update_version = str(latest_version or "")
         # 无论是否发现新版本，都同步刷新展示（用于更新红字状态）。
         self._refresh_update_header()
+        signalBus.title_changed.emit()
 
         if not result.get("enable"):
             return
@@ -3147,6 +3148,7 @@ class SettingInterface(QWidget):
         self._has_resource_update = bool(result.get("enable"))
         self._latest_resource_update_version = str(latest_resource_version or "")
         self._refresh_update_header()
+        signalBus.title_changed.emit()
 
     def _save_release_note(self, version: str, content: str):
         """保存更新日志到文件"""
