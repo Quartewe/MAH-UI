@@ -184,14 +184,9 @@ class AutoGachaPlugin(PluginBase):
 
         self._count_spin = SpinBox(left_card)
         self._count_spin.setRange(0, 9999)
-        self._count_spin.setValue(1)
+        self._count_spin.setValue(0)
         self._count_spin.setSingleStep(1)
         left_layout.addWidget(self._count_spin)
-
-        count_tip = BodyLabel("0 表示不限制次数，将持续抽取直到手动停止。", left_card)
-        count_tip.setWordWrap(True)
-        count_tip.setStyleSheet("color: rgba(128, 128, 128, 1);")
-        left_layout.addWidget(count_tip)
 
         self._start_button = PrimaryPushButton("开始", left_card)
         self._start_button.setMinimumHeight(44)
@@ -271,7 +266,7 @@ class AutoGachaPlugin(PluginBase):
             self._guide_browser.setHtml(
                 "<div style='font-size:26px;'>"
                 "1. 把画面手动设置到"
-                "<span style='color:#d13438; font-weight:700;'>战友积分画面</span>"
+                "<span style='color:#d13438; font-weight:700;'>高级战友积分画面</span>"
                 "</div>"
                 "<div style='font-size:26px;'>2. 设置好你要的数据</div>"
                 "<div style='font-size:26px;'>"

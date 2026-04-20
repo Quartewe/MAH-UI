@@ -832,8 +832,13 @@ class SettingInterface(QWidget):
         detail_row.addWidget(self.update_button)
         detail_row.addWidget(self.resource_update_button)
         detail_row.addWidget(self.update_log_button)
-        detail_row.addWidget(self.progress_container, 1)
         header_layout.addLayout(detail_row)
+
+        progress_row = QHBoxLayout()
+        progress_row.setSpacing(0)
+        progress_row.setContentsMargins(0, 0, 0, 0)
+        progress_row.addWidget(self.progress_container, 1)
+        header_layout.addLayout(progress_row)
 
         default_description = self.tr("Description: ") + self.interface_data.get(
             "description", ""
@@ -3498,6 +3503,9 @@ class SettingInterface(QWidget):
 
     def _on_download_progress(self, downloaded: int, total: int):
         """下载进度回调"""
+        # 兜底：若因布局/状态切换导致进度容器仍在占位页，收到进度时强制切到可见状态
+        if self.progress_stack.currentWidget() != self.progress_content_widget:
+            self._fade_progress_content(show=True)
         if total <= 0:
             self.progress_bar.setRange(0, 0)  # 不确定进度模式
             self._update_progress_info_label(downloaded, total)
