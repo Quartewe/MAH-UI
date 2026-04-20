@@ -485,3 +485,6 @@ app/i18n/i18n.zh_HK.qm
 release_notes/*
 MPA_custom/*
 tasks/*
+
+app/plugins/*
+app/plugins
