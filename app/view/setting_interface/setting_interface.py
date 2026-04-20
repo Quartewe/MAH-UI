@@ -832,13 +832,8 @@ class SettingInterface(QWidget):
         detail_row.addWidget(self.update_button)
         detail_row.addWidget(self.resource_update_button)
         detail_row.addWidget(self.update_log_button)
+        detail_row.addWidget(self.progress_container, 1)
         header_layout.addLayout(detail_row)
-
-        progress_row = QHBoxLayout()
-        progress_row.setSpacing(0)
-        progress_row.setContentsMargins(0, 0, 0, 0)
-        progress_row.addWidget(self.progress_container, 1)
-        header_layout.addLayout(progress_row)
 
         default_description = self.tr("Description: ") + self.interface_data.get(
             "description", ""
@@ -3248,6 +3243,11 @@ class SettingInterface(QWidget):
 
     def _on_update_stopped(self, status: int):
         """更新器停止信号统一处理 UI"""
+        # 自动更新串行阶段（资源 -> 软件）可能出现旧停止信号延迟到达。
+        # 若当前更新线程仍在运行，说明这是旧信号，避免误隐藏当前阶段进度条。
+        if self._updater and self._updater.isRunning():
+            logger.debug("忽略延迟到达的更新停止信号: status=%s", status)
+            return
         self._hide_progress_indicators()
         self._lock_update_button_temporarily()
         if status in (2, 3):
