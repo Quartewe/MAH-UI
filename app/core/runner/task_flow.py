@@ -179,7 +179,11 @@ class TaskFlowRunner(QObject):
             logger.warning(f"处理 MaaFW 回调信号时出错: {exc}")
 
     def _handle_agent_info(self, info: str):
-        if "| WARNING |" in info:
+        if "[COUNTER]" in info:
+            # Counter 输出可能不带日志级别前缀，统一转为 INFO
+            info = info[info.find("[COUNTER]") :]
+            signalBus.log_output.emit("INFO", info)
+        elif "| WARNING |" in info:
             # 从warning开始截断
             info = info.split("| WARNING |")[1]
             signalBus.log_output.emit("WARNING", info)

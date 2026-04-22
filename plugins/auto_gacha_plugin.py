@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     PrimaryPushButton,
+    ScrollArea,
     SimpleCardWidget,
     SpinBox,
     SubtitleLabel,
@@ -55,6 +57,11 @@ class AutoGachaPlugin(PluginBase):
         self._right_stack: QStackedWidget | None = None
         self._guide_browser: QTextBrowser | None = None
         self._monitor_widget: MonitorWidget | None = None
+        self._counter_preview_scroll: ScrollArea | None = None
+        self._counter_preview_container: QWidget | None = None
+        self._counter_preview_layout: QVBoxLayout | None = None
+        self._counter_preview_empty_label: BodyLabel | None = None
+        self._counter_preview_items: list[SimpleCardWidget] = []
 
         self._running_task: asyncio.Task | None = None
         self._stop_task: asyncio.Task | None = None
@@ -64,6 +71,7 @@ class AutoGachaPlugin(PluginBase):
     def on_load(self, ctx: PluginContext) -> None:
         self._ctx = ctx
         self._ctx.signal_bus.task_flow_finished.connect(self._on_task_flow_finished)
+        self._ctx.signal_bus.log_output.connect(self._on_log_output)
         self._ctx.logger.info("AutoGachaPlugin 已加载")
 
     def create_widget(self, parent: QWidget | None = None) -> QWidget:
@@ -93,6 +101,11 @@ class AutoGachaPlugin(PluginBase):
             except (RuntimeError, TypeError):
                 pass
 
+            try:
+                self._ctx.signal_bus.log_output.disconnect(self._on_log_output)
+            except (RuntimeError, TypeError):
+                pass
+
             if self._is_running and self._ctx.service_coordinator is not None:
                 asyncio.create_task(self._ctx.service_coordinator.stop_task_flow())
 
@@ -106,6 +119,11 @@ class AutoGachaPlugin(PluginBase):
         self._right_stack = None
         self._guide_browser = None
         self._monitor_widget = None
+        self._counter_preview_scroll = None
+        self._counter_preview_container = None
+        self._counter_preview_layout = None
+        self._counter_preview_empty_label = None
+        self._counter_preview_items = []
         self._running_task = None
         self._stop_task = None
         self._manual_stop_requested = False
@@ -245,6 +263,57 @@ class AutoGachaPlugin(PluginBase):
             fallback.setWordWrap(True)
             fallback.setStyleSheet("font-size: 22px; color: #d13438;")
             monitor_layout.addWidget(fallback)
+
+        history_title = BodyLabel("计数截图记录", monitor_page)
+        history_title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        monitor_layout.addWidget(history_title, 0, Qt.AlignmentFlag.AlignLeft)
+
+        self._counter_preview_scroll = ScrollArea(monitor_page)
+        self._counter_preview_scroll.setWidgetResizable(True)
+        self._counter_preview_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._counter_preview_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._counter_preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._counter_preview_scroll.setFixedHeight(330)
+        self._counter_preview_scroll.setStyleSheet(
+            "QScrollArea {"
+            "background: transparent;"
+            "border: none;"
+            "}"
+            "QScrollBar:vertical {"
+            "background: transparent;"
+            "width: 8px;"
+            "margin: 2px 0 2px 0;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            "background: rgba(180, 180, 180, 0.65);"
+            "min-height: 28px;"
+            "border-radius: 4px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "background: rgba(210, 210, 210, 0.85);"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            "height: 0px;"
+            "}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+            "background: transparent;"
+            "}"
+        )
+
+        self._counter_preview_container = QWidget(self._counter_preview_scroll)
+        self._counter_preview_layout = QVBoxLayout(self._counter_preview_container)
+        self._counter_preview_layout.setContentsMargins(0, 0, 0, 0)
+        self._counter_preview_layout.setSpacing(10)
+        self._counter_preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._counter_preview_empty_label = BodyLabel("暂无记录", self._counter_preview_container)
+        self._counter_preview_empty_label.setStyleSheet("font-size: 18px;")
+        self._counter_preview_layout.addWidget(self._counter_preview_empty_label)
+
+        self._counter_preview_scroll.setWidget(self._counter_preview_container)
+        monitor_layout.addWidget(self._counter_preview_scroll)
         monitor_layout.addStretch(1)
 
         self._right_stack.addWidget(guide_page)
@@ -369,11 +438,15 @@ class AutoGachaPlugin(PluginBase):
 
         self._manual_stop_requested = False
         self._enter_running_state()
-        self._set_status(f"状态：运行中（AutoGacha.Count.max_hit={count}）")
+        self._set_status(f"状态：运行中（AutoGacha.Record.max_hit={count}）")
 
         pipeline_override = {
-            "AutoGacha.Count": {
-                "max_hit": int(count),
+            "AutoGacha.Record": {
+                "action": {
+                    "param": {
+                        "custom_action_param": int(count)
+                    }
+                }
             }
         }
         self._running_task = asyncio.create_task(self._run_pipeline(pipeline_override))
@@ -430,6 +503,7 @@ class AutoGachaPlugin(PluginBase):
 
     def _enter_running_state(self) -> None:
         self._is_running = True
+        self._reset_counter_preview()
 
         if self._right_title is not None:
             self._right_title.setText("实时监控")
@@ -464,6 +538,176 @@ class AutoGachaPlugin(PluginBase):
         reason = str(payload.get("reason", "") or "")
         if reason:
             self._set_status(f"状态：{reason}")
+
+    def _on_log_output(self, level: str, text: str) -> None:
+        _ = level
+        if not self._is_running:
+            return
+        if "[COUNTER]" not in text:
+            return
+
+        count = self._extract_counter_value(text)
+        if count is None:
+            return
+        self._update_counter_preview(count)
+
+    def _extract_counter_value(self, text: str) -> int | None:
+        markers = ("计数已增加到", "计数达到最大值")
+        for marker in markers:
+            if marker not in text:
+                continue
+            value_part = text.split(marker, 1)[1].strip()
+            digits: list[str] = []
+            for ch in value_part:
+                if ch.isdigit():
+                    digits.append(ch)
+                elif digits:
+                    break
+            if digits:
+                return int("".join(digits))
+        return None
+
+    def _update_counter_preview(self, count: int) -> None:
+        if self._counter_preview_layout is None:
+            return
+
+        if self._counter_preview_empty_label is not None:
+            self._counter_preview_empty_label.hide()
+
+        pixmap = self._capture_cached_frame_pixmap()
+        item = self._build_counter_preview_item(count, pixmap)
+        self._counter_preview_layout.addWidget(item)
+        self._counter_preview_items.append(item)
+
+        max_items = 40
+        if len(self._counter_preview_items) > max_items:
+            first_item = self._counter_preview_items.pop(0)
+            self._counter_preview_layout.removeWidget(first_item)
+            first_item.deleteLater()
+
+        self._scroll_counter_preview_to_bottom()
+
+    def _reset_counter_preview(self) -> None:
+        if self._counter_preview_layout is None:
+            return
+
+        for item in self._counter_preview_items:
+            self._counter_preview_layout.removeWidget(item)
+            item.deleteLater()
+        self._counter_preview_items.clear()
+
+        if self._counter_preview_empty_label is not None:
+            self._counter_preview_empty_label.show()
+
+        if self._counter_preview_scroll is not None:
+            scroll_bar = self._counter_preview_scroll.verticalScrollBar()
+            scroll_bar.setValue(0)
+
+    def _build_counter_preview_item(
+        self,
+        count: int,
+        pixmap: QPixmap | None,
+    ) -> SimpleCardWidget:
+        parent = self._counter_preview_container
+        card = SimpleCardWidget(parent)
+        card.setClickEnabled(False)
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(10, 10, 10, 10)
+        card_layout.setSpacing(8)
+
+        title = BodyLabel(f"第{count}次: 图片", card)
+        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        card_layout.addWidget(title)
+
+        image_label = QLabel(card)
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setFixedSize(390, 220)
+        image_label.setStyleSheet(
+            "QLabel {"
+            "border: 1px solid rgba(120, 120, 120, 0.5);"
+            "border-radius: 8px;"
+            "background: rgba(0, 0, 0, 0.05);"
+            "font-size: 16px;"
+            "}"
+        )
+
+        if pixmap is None or pixmap.isNull():
+            image_label.setText("暂无图片")
+        else:
+            scaled = pixmap.scaled(
+                image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            image_label.setText("")
+            image_label.setPixmap(scaled)
+
+        card_layout.addWidget(image_label)
+        return card
+
+    def _scroll_counter_preview_to_bottom(self) -> None:
+        if self._counter_preview_scroll is None:
+            return
+        scroll_bar = self._counter_preview_scroll.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+
+    def _get_controller(self):
+        if self._ctx is None or self._ctx.service_coordinator is None:
+            return None
+        try:
+            if hasattr(self._ctx.service_coordinator, "run_manager"):
+                task_flow = self._ctx.service_coordinator.run_manager
+                if task_flow and hasattr(task_flow, "maafw"):
+                    return getattr(task_flow.maafw, "controller", None)
+        except Exception:
+            return None
+        return None
+
+    def _capture_cached_frame_pixmap(self) -> QPixmap | None:
+        controller = self._get_controller()
+        if controller is None:
+            return None
+
+        try:
+            cached_attr = getattr(controller, "cached_image", None)
+            if cached_attr is None:
+                return None
+            cached = cached_attr() if callable(cached_attr) else cached_attr
+            if cached is None:
+                return None
+        except Exception:
+            return None
+
+        try:
+            import numpy as np  # type: ignore
+
+            if not isinstance(cached, np.ndarray):
+                return None
+            if cached.ndim != 3 or cached.shape[2] < 3:
+                return None
+
+            h = int(cached.shape[0])
+            w = int(cached.shape[1])
+            if h <= 0 or w <= 0:
+                return None
+
+            bgr = cached[:, :, :3]
+            rgb = bgr[..., ::-1]
+            if rgb.dtype != np.uint8:
+                rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+
+            rgb = np.ascontiguousarray(rgb)
+            qimg = QImage(
+                rgb.data,
+                w,
+                h,
+                3 * w,
+                QImage.Format.Format_RGB888,
+            ).copy()
+            return QPixmap.fromImage(qimg)
+        except Exception:
+            return None
 
     def _set_status(self, text: str) -> None:
         if self._status_label is not None:
