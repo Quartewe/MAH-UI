@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -275,7 +276,11 @@ class AutoGachaPlugin(PluginBase):
         )
         self._counter_preview_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._counter_preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._counter_preview_scroll.setFixedHeight(330)
+        self._counter_preview_scroll.setMinimumHeight(330)
+        self._counter_preview_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self._counter_preview_scroll.setStyleSheet(
             "QScrollArea {"
             "background: transparent;"
@@ -313,8 +318,7 @@ class AutoGachaPlugin(PluginBase):
         self._counter_preview_layout.addWidget(self._counter_preview_empty_label)
 
         self._counter_preview_scroll.setWidget(self._counter_preview_container)
-        monitor_layout.addWidget(self._counter_preview_scroll)
-        monitor_layout.addStretch(1)
+        monitor_layout.addWidget(self._counter_preview_scroll, 1)
 
         self._right_stack.addWidget(guide_page)
         self._right_stack.addWidget(monitor_page)
@@ -530,8 +534,6 @@ class AutoGachaPlugin(PluginBase):
         if self._count_spin is not None:
             self._count_spin.setEnabled(True)
 
-        self._show_guide_text()
-
     def _on_task_flow_finished(self, payload: dict[str, Any]) -> None:
         if not self._is_running:
             return
@@ -541,8 +543,6 @@ class AutoGachaPlugin(PluginBase):
 
     def _on_log_output(self, level: str, text: str) -> None:
         _ = level
-        if not self._is_running:
-            return
         if "[COUNTER]" not in text:
             return
 
@@ -552,19 +552,16 @@ class AutoGachaPlugin(PluginBase):
         self._update_counter_preview(count)
 
     def _extract_counter_value(self, text: str) -> int | None:
-        markers = ("计数已增加到", "计数达到最大值")
-        for marker in markers:
-            if marker not in text:
-                continue
-            value_part = text.split(marker, 1)[1].strip()
-            digits: list[str] = []
-            for ch in value_part:
-                if ch.isdigit():
-                    digits.append(ch)
-                elif digits:
-                    break
-            if digits:
-                return int("".join(digits))
+        counter_text = text[text.find("[COUNTER]") :]
+
+        # 优先匹配结构化字段，避免抓到目标值等无关数字。
+        match = re.search(r"\bcount=(\d+)\b", counter_text)
+        if match:
+            return int(match.group(1))
+
+        match = re.search(r"\[COUNTER\][^\d]*(\d+)", counter_text)
+        if match:
+            return int(match.group(1))
         return None
 
     def _update_counter_preview(self, count: int) -> None:
@@ -611,18 +608,21 @@ class AutoGachaPlugin(PluginBase):
         parent = self._counter_preview_container
         card = SimpleCardWidget(parent)
         card.setClickEnabled(False)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(10, 10, 10, 10)
         card_layout.setSpacing(8)
 
-        title = BodyLabel(f"第{count}次: 图片", card)
+        title = BodyLabel(f"第{count}次: 召唤结果", card)
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
         card_layout.addWidget(title)
 
         image_label = QLabel(card)
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image_label.setFixedSize(390, 220)
+        target_width = self._get_preview_target_width()
+        fallback_height = max(160, int(target_width * 9 / 16))
+        image_label.setFixedSize(target_width, fallback_height)
         image_label.setStyleSheet(
             "QLabel {"
             "border: 1px solid rgba(120, 120, 120, 0.5);"
@@ -636,15 +636,32 @@ class AutoGachaPlugin(PluginBase):
             image_label.setText("暂无图片")
         else:
             scaled = pixmap.scaled(
-                image_label.size(),
+                target_width,
+                560,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             image_label.setText("")
+            image_label.setFixedSize(scaled.size())
             image_label.setPixmap(scaled)
 
         card_layout.addWidget(image_label)
         return card
+
+    def _get_preview_target_width(self) -> int:
+        default_width = 390
+        if self._counter_preview_scroll is None:
+            return default_width
+        try:
+            viewport = self._counter_preview_scroll.viewport()
+            if viewport is None:
+                return default_width
+            width = int(viewport.width()) - 20
+            if width <= 0:
+                return default_width
+            return max(220, min(width, 880))
+        except Exception:
+            return default_width
 
     def _scroll_counter_preview_to_bottom(self) -> None:
         if self._counter_preview_scroll is None:
@@ -669,14 +686,26 @@ class AutoGachaPlugin(PluginBase):
         if controller is None:
             return None
 
+        cached = None
         try:
             cached_attr = getattr(controller, "cached_image", None)
-            if cached_attr is None:
-                return None
-            cached = cached_attr() if callable(cached_attr) else cached_attr
-            if cached is None:
-                return None
+            if cached_attr is not None:
+                cached = cached_attr() if callable(cached_attr) else cached_attr
         except Exception:
+            cached = None
+
+        # cached_image 为空时兜底抓取一帧，避免统计项只有标题没有图片。
+        if cached is None:
+            try:
+                post_screencap = getattr(controller, "post_screencap", None)
+                if post_screencap is not None:
+                    raw = post_screencap().wait().get()
+                    if raw is not None:
+                        cached = raw
+            except Exception:
+                cached = None
+
+        if cached is None:
             return None
 
         try:

@@ -733,17 +733,31 @@ class MaaFW(QObject):
             arg.replace("{PROJECT_DIR}", str(project_dir)) for arg in child_args
         ]
         agent_process: subprocess.Popen | None = None
-        start_cmd = [child_exec, *child_args, socket_id]
-        logger.debug(f"启动agent命令: {start_cmd}")
-        # 如果是打包模式,使用utf8,否则使用gbk
         import os
         import sys
 
-        # 使用 sys.frozen 判断是否打包（PyInstaller 标准方式）
-        is_packed = getattr(sys, "frozen", False)
-        encoding = "utf-8" if is_packed else "gbk"
+        child_exec_name = Path(child_exec).name.lower()
+        is_python_exec = "python" in child_exec_name
+
+        start_cmd = [child_exec, *child_args, socket_id]
+        if is_python_exec:
+            # 对 Python 子进程强制无缓冲和 UTF-8，避免日志延迟与乱码。
+            start_cmd = [child_exec, "-u", "-X", "utf8", *child_args, socket_id]
+        logger.debug(f"启动agent命令: {start_cmd}")
+
+        if is_python_exec:
+            encoding = "utf-8"
+        else:
+            # 使用 sys.frozen 判断是否打包（PyInstaller 标准方式）
+            is_packed = getattr(sys, "frozen", False)
+            encoding = "utf-8" if is_packed else "gbk"
 
         runtime_env = os.environ.copy()
+        if is_python_exec:
+            runtime_env["PYTHONUNBUFFERED"] = "1"
+            runtime_env["PYTHONIOENCODING"] = "utf-8"
+            runtime_env["PYTHONUTF8"] = "1"
+
         internal_dir = project_dir / "_internal"
         if internal_dir.exists():
             internal_str = str(internal_dir)
