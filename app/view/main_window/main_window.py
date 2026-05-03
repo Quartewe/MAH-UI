@@ -32,6 +32,7 @@ MFW-ChainFlow Assistant 主界面
 
 import asyncio
 import hashlib
+import importlib
 import json
 import re
 import shutil
@@ -2803,6 +2804,7 @@ class MainWindow(MSFluentWindow):
 
                 if status == 1:
                     # 资源热更新后刷新标题，再进入本体阶段。
+                    self._clear_update_flag_on_setting("resource")
                     QTimer.singleShot(0, self.set_title)
                 if status == 2:
                     self._auto_update_pending_restart = True
@@ -2839,7 +2841,8 @@ class MainWindow(MSFluentWindow):
             self._auto_update_stage = None
 
             if status == 1:
-                # 热更新完成后，重新设置窗口标题（延迟到下一个事件循环，确保 reinit 完成）
+                # 热更新完成后清空软件更新标记，重新设置窗口标题
+                self._clear_update_flag_on_setting("software")
                 QTimer.singleShot(0, self.set_title)
                 # 检查是否需要启动 bundle 更新
                 self._check_and_start_bundle_update()
@@ -2878,7 +2881,8 @@ class MainWindow(MSFluentWindow):
         self._auto_update_thread = None
         self._auto_update_stage = None
         if status == 1:
-            # 热更新完成后，重新设置窗口标题（延迟到下一个事件循环，确保 reinit 完成）
+            # 热更新完成后清空更新标记（手动触发场景，清空所有标记），重新设置窗口标题
+            self._clear_update_flag_on_setting("all")
             QTimer.singleShot(0, self.set_title)
             if self._pending_auto_run:
                 self._schedule_auto_run()
@@ -2903,6 +2907,21 @@ class MainWindow(MSFluentWindow):
         if self._pending_auto_run:
             self._schedule_auto_run()
         self._pending_auto_run = False
+
+    def _clear_update_flag_on_setting(self, target: str = "all") -> None:
+        """热更新完成后清空 SettingInterface 上的更新标记，消除标题栏 RGB 与更新文案。
+
+        Args:
+            target: "resource" 仅清资源标记, "software" 仅清软件标记, "all" 清全部
+        """
+        setting_interface = getattr(self, "SettingInterface", None)
+        if setting_interface is None:
+            return
+        if target in ("resource", "all"):
+            setting_interface._has_resource_update = False
+        if target in ("software", "all"):
+            setting_interface._has_software_update = False
+        setting_interface._refresh_update_header()
 
     def _check_and_start_bundle_update(self):
         """检查并启动 bundle 更新"""
@@ -3135,7 +3154,6 @@ class MainWindow(MSFluentWindow):
         from app.common.__version__ import __version__
 
         app_name = str(meta.get("name", "") or "").strip()
-        app_version = str(__version__ or "").strip()
         resource_version = str(meta.get("resource_version", "") or "").strip()
 
         if not resource_version:
