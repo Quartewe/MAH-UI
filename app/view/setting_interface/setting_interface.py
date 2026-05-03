@@ -3257,6 +3257,10 @@ class SettingInterface(QWidget):
             return
         self._restart_update_required = False
         self._bind_start_button(enable=False)
+        # 热更新完成（status==1）后清空更新标记，消除标题 RGB 与红字更新提示
+        if status == 1:
+            self._has_resource_update = False
+            self._has_software_update = False
         # 同步当前/最新版本显示（即便无更新也刷新）
         self._refresh_update_header()
 
