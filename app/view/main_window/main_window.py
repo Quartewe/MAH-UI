@@ -3151,20 +3151,7 @@ class MainWindow(MSFluentWindow):
     def set_title(self):
         """设置窗口标题"""
         meta = self.service_coordinator.task.interface or {}
-        # 优先从 interface["version"] 读取软件版本，因为热更新会通过
-        # _sync_interface_version 同步该字段，而 __version__ 模块在
-        # PyInstaller 打包后位于 base_library.zip 内无法被热更新覆盖。
-        interface_version = str(meta.get("version", "") or "").strip()
-        if interface_version:
-            app_version = interface_version
-        else:
-            try:
-                import app.common.__version__ as _ver_mod
-                importlib.reload(_ver_mod)
-                app_version = str(_ver_mod.__version__ or "").strip()
-            except Exception:
-                from app.common.__version__ import __version__
-                app_version = str(__version__ or "").strip()
+        from app.common.__version__ import __version__
 
         app_name = str(meta.get("name", "") or "").strip()
         resource_version = str(meta.get("resource_version", "") or "").strip()
