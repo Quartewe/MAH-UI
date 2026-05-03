@@ -2002,7 +2002,7 @@ class SettingInterface(QWidget):
         )
         line3_html = separator_html.join(
             [
-                escape(self.tr("UI version: ") + str(UI_VERSION)),
+                escape(self.tr("UI version: ") + str(mah_current_version)),
                 escape(self.tr("MaaFW version: ") + str(maafw_version)),
             ]
         )
@@ -2047,8 +2047,10 @@ class SettingInterface(QWidget):
         icon_path = "app/assets/icons/logo.png"
         name = self.tr("MFW-ChainFlow Assistant")
         self.name = "MFW_CFA"
-        # 当前版本使用 UI 本体版本号
-        current_version = UI_VERSION
+        # 当前版本优先从 interface["version"] 读取（热更新会同步该字段），
+        # 降级使用 UI_VERSION 静态常量（PyInstaller 打包后位于 base_library.zip 内无法热更）
+        interface_version = self._get_interface_metadata().get("version", "")
+        current_version = str(interface_version or UI_VERSION)
         license_value = "GNU General Public License v3.0"
         for license in ["MFW_LICENSE", "LICENSE"]:
             if Path(license).is_file():
@@ -3257,6 +3259,10 @@ class SettingInterface(QWidget):
             return
         self._restart_update_required = False
         self._bind_start_button(enable=False)
+        # 热更新完成（status==1）后清空更新标记，消除标题 RGB 与红字更新提示
+        if status == 1:
+            self._has_resource_update = False
+            self._has_software_update = False
         # 同步当前/最新版本显示（即便无更新也刷新）
         self._refresh_update_header()
 

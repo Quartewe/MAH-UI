@@ -14,3 +14,4 @@ pyperclip
 pillow
 json-with-comments
 defusedxml
+bs4
