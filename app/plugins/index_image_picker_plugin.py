@@ -170,7 +170,7 @@ class ImageEntryCard(QFrame):
 class IndexImagePickerPlugin(PluginBase):
     meta = PluginMeta(
         plugin_id="mah.index_image_picker",
-        name="资源索引选图器",
+        name="资源索引",
         version="1.0.0",
         description="按 index 条件筛选并选中图片，复制对应 key",
         icon="LIBRARY",
