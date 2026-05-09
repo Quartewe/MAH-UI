@@ -773,6 +773,30 @@ class MainWindow(MSFluentWindow):
 
         super().changeEvent(event)
 
+    def _switch_to_interface(self, interface: QWidget | None) -> None:
+        if interface is None:
+            return
+        if self.stackedWidget.indexOf(interface) < 0:
+            return
+        try:
+            self.switchTo(interface)
+        except (AttributeError, TypeError) as exc:
+            logger.warning(
+                "switchTo(%r) failed, fallback to stackedWidget.setCurrentWidget: %s",
+                interface,
+                exc,
+            )
+            try:
+                self.stackedWidget.setCurrentWidget(interface, popOut=False)
+            except TypeError as fallback_exc:
+                logger.debug(
+                    "stackedWidget.setCurrentWidget(%r, popOut=False) failed, "
+                    "retry without popOut: %s",
+                    interface,
+                    fallback_exc,
+                )
+                self.stackedWidget.setCurrentWidget(interface)
+
     def _add_bundle_interface_to_navigation(self) -> None:
         """将 BundleInterface 添加到导航栏，并隐藏 Announcement。
 
@@ -843,7 +867,7 @@ class MainWindow(MSFluentWindow):
                     "bundle_interface",
                     FIF.FOLDER,
                     self._wrap_sidebar_text(self.tr("Bundle")),
-                    onClick=lambda: self.stackedWidget.setCurrentWidget(
+                    onClick=lambda: self._switch_to_interface(
                         self.BundleInterface
                     ),
                     selectable=True,
@@ -1511,7 +1535,7 @@ class MainWindow(MSFluentWindow):
         """从插件集合页切换到指定插件页面。"""
         widget = self._plugin_widgets.get(plugin_id)
         if widget is not None:
-            self.stackedWidget.setCurrentWidget(widget)
+            self._switch_to_interface(widget)
 
     def get_plugin_customization_snapshot(self) -> list[dict]:
         """返回插件自定义快照，供设置页编辑。"""
