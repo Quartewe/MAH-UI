@@ -3332,7 +3332,7 @@ class MainWindow(MSFluentWindow):
 
         logger.info(f" 设置窗口标题：{title}")
         self.setWindowTitle(title)
-        self._render_title_label_with_dynamic_rgb()
+        QTimer.singleShot(50, self._render_title_label_with_dynamic_rgb)
 
     @staticmethod
     def _escape_html_text(value: str) -> str:
