@@ -3250,6 +3250,7 @@ class MainWindow(MSFluentWindow):
         meta = self.service_coordinator.task.interface or {}
         from app.common.__version__ import __version__
 
+        app_version = str(meta.get("version", "") or "").strip() or __version__
         app_name = str(meta.get("name", "") or "").strip()
         resource_version = str(meta.get("resource_version", "") or "").strip()
 
