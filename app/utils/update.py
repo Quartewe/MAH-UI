@@ -28,6 +28,7 @@ from datetime import datetime
 from time import perf_counter
 import requests
 from requests import Response, HTTPError
+import json
 import jsonc
 import os
 import re
@@ -763,6 +764,26 @@ class BaseUpdate(QThread):
             return True
         logger.warning("[步骤5] 未找到可写入的 interface 文件，跳过资源版本号同步")
         return False
+
+    def _mark_pending_release_version(self, version: str) -> None:
+        """标记有待展示的更新公告版本，供下次启动时弹出。仅对软件更新生效。"""
+        if not version:
+            return
+        if self.update_target != "software":
+            return
+        try:
+            raw_value = cfg.get(cfg.announcement) or ""
+            try:
+                parsed = json.loads(raw_value) if raw_value else {}
+            except json.JSONDecodeError:
+                parsed = {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+            parsed["pending_release_version"] = version
+            cfg.set(cfg.announcement, json.dumps(parsed, ensure_ascii=False))
+            logger.info("已标记更新公告待展示版本: %s", version)
+        except Exception as exc:
+            logger.warning("标记更新公告版本失败: %s", exc)
 
     def _write_update_metadata(
         self,
@@ -1574,6 +1595,9 @@ class Update(BaseUpdate):
         )
 
         logger.info("[步骤3] 准备重启以进行更新")
+        self._mark_pending_release_version(
+            str(self.latest_update_version or "")
+        )
         return self._stop_with_notice(2)
 
     def _run_normal(self) -> None:
@@ -1713,10 +1737,16 @@ class Update(BaseUpdate):
                 and getattr(sys, "frozen", False)
             ):
                 logger.info("[步骤3] 打包环境的软件增量更新交由外部更新器执行，准备重启")
+                self._mark_pending_release_version(
+                    str(self.latest_update_version or "")
+                )
                 return self._stop_with_notice(2)
 
             if download_source == "mirror":
                 logger.info("[步骤3] 准备重启以进行镜像更新")
+                self._mark_pending_release_version(
+                    str(self.latest_update_version or "")
+                )
                 return self._stop_with_notice(2)
 
             # 步骤3: 判断是否可以热更新
@@ -1823,6 +1853,9 @@ class Update(BaseUpdate):
                         self.latest_update_version,
                     ):
                         logger.info("[步骤5] interface 配置同步完毕")
+                        self._mark_pending_release_version(
+                            str(self.latest_update_version or "")
+                        )
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
             logger.info("=" * 50)
@@ -2841,6 +2874,9 @@ class MultiResourceUpdate(Update):
                         self.latest_update_version,
                     ):
                         logger.info("[步骤5] interface 配置同步完毕")
+                        self._mark_pending_release_version(
+                            str(self.latest_update_version or "")
+                        )
 
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")

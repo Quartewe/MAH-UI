@@ -2421,6 +2421,9 @@ class MainWindow(MSFluentWindow):
             # 注意：此时不更新配置，只有在用户关闭对话框时才更新
             self._announcement_pending_show = True
 
+        # 检查是否有未展示的更新公告（触发更新后下次启动弹出）
+        self._try_show_pending_release_notes()
+
     def _compute_text_md5(self, text: str) -> str:
         """计算文本的 MD5（用于 welcome 公告变更判断），为空返回空字符串。"""
         if not text:
@@ -2553,6 +2556,100 @@ class MainWindow(MSFluentWindow):
                 if title:
                     return title
         return None
+
+    # region 更新公告（release_notes）自动弹出
+    def _try_show_pending_release_notes(self) -> None:
+        """检查是否有待展示的更新公告（由更新器在上次更新完成时标记），如有则弹出。"""
+        if not getattr(self, "_announcement_enabled", True):
+            return
+        try:
+            raw_value = cfg.get(cfg.announcement) or ""
+            if not raw_value:
+                return
+            try:
+                parsed = json.loads(raw_value)
+            except json.JSONDecodeError:
+                return
+            if not isinstance(parsed, dict):
+                return
+
+            pending_version = str(parsed.get("pending_release_version", "") or "").strip()
+            if not pending_version:
+                return
+
+            last_shown = str(parsed.get("last_shown_release_version", "") or "").strip()
+
+            # 版本比较（兼容可选 v 前缀）
+            def _normalize(v: str) -> str:
+                return v.strip().lower().lstrip("v")
+
+            if _normalize(pending_version) == _normalize(last_shown):
+                # 已展示过，清除 pending 标记
+                parsed.pop("pending_release_version", None)
+                cfg.set(cfg.announcement, json.dumps(parsed, ensure_ascii=False))
+                return
+
+            # 规范化版本号用于文件查找
+            normalized = pending_version
+            if normalized and not normalized.lower().startswith("v"):
+                normalized = f"v{normalized}"
+
+            release_notes_dir = Path.cwd() / "docs" / "release_note"
+            release_notes_text: str | None = None
+            if release_notes_dir.is_dir():
+                for candidate in (
+                    release_notes_dir / f"{normalized}.md",
+                    release_notes_dir / f"{normalized.lower()}.md",
+                    release_notes_dir / f"{normalized.upper()}.md",
+                ):
+                    if candidate.is_file():
+                        try:
+                            text = candidate.read_text(encoding="utf-8").strip()
+                            if text:
+                                release_notes_text = text
+                                logger.info("成功加载更新公告: %s", candidate)
+                            break
+                        except Exception as exc:
+                            logger.warning("加载更新公告失败 (%s): %s", candidate, exc)
+
+            if not release_notes_text:
+                # 无公告文件也清除 pending，避免反复尝试
+                parsed.pop("pending_release_version", None)
+                parsed["last_shown_release_version"] = pending_version
+                cfg.set(cfg.announcement, json.dumps(parsed, ensure_ascii=False))
+                logger.debug("版本 %s 无更新公告文件，已标记为已展示", pending_version)
+                return
+
+            # 延迟弹窗，避免阻塞初始化
+            def _show():
+                title = self.tr("Update Announcement") + f" - {pending_version}"
+                content = {self.tr("Release Notes"): release_notes_text}
+                dialog = NoticeMessageBox(
+                    parent=self,
+                    title=title,
+                    content=content,
+                )
+                dialog.button_yes.hide()
+                dialog.button_cancel.setText(self.tr("Close"))
+                dialog.exec()
+                # 用户关闭后：清除 pending，记录已展示
+                raw = cfg.get(cfg.announcement) or ""
+                try:
+                    p = json.loads(raw) if raw else {}
+                except json.JSONDecodeError:
+                    p = {}
+                if not isinstance(p, dict):
+                    p = {}
+                p.pop("pending_release_version", None)
+                p["last_shown_release_version"] = pending_version
+                cfg.set(cfg.announcement, json.dumps(p, ensure_ascii=False))
+                logger.info("更新公告已展示，版本: %s", pending_version)
+
+            QTimer.singleShot(800, _show)
+        except Exception as exc:
+            logger.warning("检查待展示更新公告失败: %s", exc)
+
+    # endregion
 
     def _insert_announcement_nav_item(self):
         """在设置入口上方插入公告按钮，并挂载点击行为。"""
