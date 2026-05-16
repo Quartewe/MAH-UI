@@ -717,6 +717,80 @@ class BaseUpdate(QThread):
             Path("resource/base/image/character"),
         ]
 
+    def _ensure_agent_deps(self):
+        """软件增量更新后同步 agent 的 pip 依赖，仅安装缺失/版本不匹配的包。"""
+        import importlib.metadata as _imeta
+        import subprocess as _subprocess
+
+        req_file = Path("./agent/requirements.txt")
+        if not req_file.is_file():
+            return
+
+        python_exe = self._resolve_embedded_python()
+        if not python_exe:
+            logger.warning("[agent deps] 未找到内置 Python，跳过依赖安装")
+            return
+
+        # 解析 requirements.txt（仅包名，忽略版本约束）
+        needed: set[str] = set()
+        try:
+            for line in req_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                pkg = line.split("==")[0].split(">=")[0].split("<=")[0].split("~")[0].split("!=")[0].split(";")[0].strip()
+                if pkg:
+                    needed.add(pkg.lower())
+        except Exception as exc:
+            logger.warning("[agent deps] 解析 requirements.txt 失败: %s", exc)
+            return
+
+        if not needed:
+            return
+
+        # 检查已安装的包
+        try:
+            installed = {d.metadata["Name"].lower() for d in _imeta.distributions()}
+        except Exception as exc:
+            logger.warning("[agent deps] 读取已安装包列表失败: %s", exc)
+            return
+
+        missing = sorted(needed - installed)
+        if not missing:
+            logger.debug("[agent deps] 所有 agent 依赖已就绪，跳过安装")
+            return
+
+        logger.info("[agent deps] 检测到缺失依赖: %s，开始安装", missing)
+        try:
+            proc = _subprocess.run(
+                [str(python_exe), "-m", "pip", "install", *missing],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if proc.returncode == 0:
+                logger.info("[agent deps] pip install 成功: %s", missing)
+            else:
+                logger.warning(
+                    "[agent deps] pip install 返回非零: %s, stderr: %s",
+                    proc.returncode,
+                    proc.stderr[-500:] if proc.stderr else "",
+                )
+        except Exception as exc:
+            logger.warning("[agent deps] pip install 异常: %s", exc)
+
+    @staticmethod
+    def _resolve_embedded_python() -> Path | None:
+        """定位内置 Python 解释器（优先 _internal，其次 python 目录）。"""
+        candidates = [
+            Path("./_internal/python.exe"),
+            Path("./python/python.exe"),
+        ]
+        for c in candidates:
+            if c.exists():
+                return c.resolve()
+        return None
+
     def _sync_interface_version(self, bundle_path_obj: Path, version: str | None) -> bool:
         """同步 interface 版本号，仅用于应用更新。"""
         interface_paths = [
@@ -1858,6 +1932,9 @@ class Update(BaseUpdate):
                         )
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
+            # 软件增量更新后同步 agent 的 pip 依赖
+            if self.update_target == "software":
+                self._ensure_agent_deps()
             logger.info("=" * 50)
             self._emit_info_bar("success", self.tr("Update applied successfully"))
             self._cleanup_update_artifacts(download_dir, zip_file_path)

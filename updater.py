@@ -396,6 +396,80 @@ def restore_files_from_backup(backup_dir):
         print(f"恢复文件时出错: {e}")
 
 
+def _resolve_embedded_python() -> str | None:
+    """定位内置 Python 解释器（优先 _internal，其次 python 目录）。"""
+    candidates = [
+        Path("./_internal/python.exe"),
+        Path("./python/python.exe"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c.resolve())
+    return None
+
+
+def _ensure_agent_deps():
+    """软件增量更新后同步 agent 的 pip 依赖，仅安装缺失/版本不匹配的包。"""
+    import importlib.metadata as _imeta
+
+    req_file = Path("./agent/requirements.txt")
+    if not req_file.is_file():
+        return
+
+    python_exe = _resolve_embedded_python()
+    if not python_exe:
+        update_logger.warning("[agent deps] 未找到内置 Python，跳过依赖安装")
+        return
+
+    # 解析 requirements.txt（仅包名，忽略版本约束）
+    needed: set[str] = set()
+    try:
+        for line in req_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            pkg = line.split("==")[0].split(">=")[0].split("<=")[0].split("~")[0].split("!=")[0].split(";")[0].strip()
+            if pkg:
+                needed.add(pkg.lower())
+    except Exception as exc:
+        update_logger.warning("[agent deps] 解析 requirements.txt 失败: %s", exc)
+        return
+
+    if not needed:
+        return
+
+    # 检查已安装的包
+    try:
+        installed = {d.metadata["Name"].lower() for d in _imeta.distributions()}
+    except Exception as exc:
+        update_logger.warning("[agent deps] 读取已安装包列表失败: %s", exc)
+        return
+
+    missing = sorted(needed - installed)
+    if not missing:
+        update_logger.debug("[agent deps] 所有 agent 依赖已就绪，跳过安装")
+        return
+
+    update_logger.info("[agent deps] 检测到缺失依赖: %s，开始安装", missing)
+    try:
+        proc = subprocess.run(
+            [python_exe, "-m", "pip", "install", *missing],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            update_logger.info("[agent deps] pip install 成功: %s", missing)
+        else:
+            update_logger.warning(
+                "[agent deps] pip install 返回非零: %s, stderr: %s",
+                proc.returncode,
+                proc.stderr[-500:] if proc.stderr else "",
+            )
+    except Exception as exc:
+        update_logger.warning("[agent deps] pip install 异常: %s", exc)
+
+
 def extract_zip_file_with_validation(update_file_path):
     """
     解压指定的压缩文件，使用循环逐个文件解压并验证
@@ -452,6 +526,9 @@ def extract_zip_file_with_validation(update_file_path):
         print("[解压] 开始复制文件到目标目录...")
         _copy_temp_to_root(extract_dir, verbose=True)
         print("[解压] 文件复制完成")
+
+        # 软件增量更新后同步 agent 的 pip 依赖（idempotent）
+        _ensure_agent_deps()
         return True
     except Exception as exc:
         error_msg = f"解压过程出错: {exc}"

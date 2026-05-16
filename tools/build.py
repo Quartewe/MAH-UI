@@ -84,6 +84,7 @@ try:
     agent_path = locate_package("MaaAgentBinary")  # 设备连接组件
     darkdetect_path = locate_package("darkdetect")  # 系统主题检测库
     strenum = locate_package("strenum")
+    loguru_path = locate_package("loguru")  # agent 日志框架
 except FileNotFoundError as e:
     print(f"[FATAL] Dependency missing: {str(e)}")
     sys.exit(1)
@@ -103,11 +104,13 @@ base_command = [
     "--collect-data=maa",
     "--collect-data=MaaAgentBinary",
     "--collect-data=certifi",  # 收集 certifi 证书文件
+    "--collect-data=loguru",  # agent 日志框架
     # 隐式依赖声明
     "--hidden-import=darkdetect",
     "--hidden-import=maa",
     "--hidden-import=MaaAgentBinary",
     "--hidden-import=certifi",  # 确保 certifi 模块被包含
+    "--hidden-import=loguru",  # agent 日志框架
 ]
 
 # === 平台特定配置 准备阶段 ===
