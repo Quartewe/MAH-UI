@@ -3337,6 +3337,42 @@ class SettingInterface(QWidget):
         )
         self._updater.start()
 
+    def _extract_updater_from_package(self) -> bool:
+        """从 update/new_version/ 中的增量包里提取更新器二进制，直接覆盖旧文件。
+
+        之后启动更新器时无需重命名旧更新器，新更新器可直接运行。
+        """
+        import zipfile
+        import sys
+
+        target_dir = Path.cwd() / "update" / "new_version"
+        if not target_dir.is_dir():
+            return True  # 无更新包也不阻断
+
+        zip_candidates = [
+            p for p in target_dir.iterdir() if p.is_file() and p.name.lower().endswith(".zip")
+        ]
+        if not zip_candidates:
+            return True
+
+        updater_names = ["MAHUpdater.exe", "MFWUpdater.exe"] if sys.platform.startswith("win32") else ["MAHUpdater", "MFWUpdater"]
+
+        try:
+            with zipfile.ZipFile(zip_candidates[0], "r") as zf:
+                for member in zf.namelist():
+                    member_name = Path(member.replace("\\", "/")).name
+                    if member_name not in updater_names:
+                        continue
+                    target_path = Path.cwd() / member_name
+                    logger.info("从增量包提取更新器: %s → %s", member, target_path)
+                    with zf.open(member) as src, open(target_path, "wb") as dst:
+                        dst.write(src.read())
+                    logger.info("更新器二进制已覆盖: %s", target_path)
+                    return True
+        except Exception as exc:
+            logger.warning("从增量包提取更新器失败，将使用现有更新器: %s", exc)
+        return True
+
     def _handle_instant_update(
         self, *, auto_accept: bool = False, notify_if_cancel: bool = False
     ) -> None:
@@ -3362,22 +3398,8 @@ class SettingInterface(QWidget):
 
         self._updater_started = True
 
-        import sys
-
-        try:
-            if sys.platform.startswith("win32"):
-                self._rename_updater("MFWUpdater.exe", "MFWUpdater1.exe")
-                self._rename_updater("MAHUpdater.exe", "MAHUpdater1.exe")
-            elif sys.platform.startswith("darwin") or sys.platform.startswith("linux"):
-                self._rename_updater("MFWUpdater", "MFWUpdater1")
-                self._rename_updater("MAHUpdater", "MAHUpdater1")
-        except Exception as e:
-            self._updater_started = False
-            logger.error(f"重命名更新程序失败: {e}")
-            signalBus.info_bar_requested.emit("error", e)
-            if notify_if_cancel:
-                signalBus.update_stopped.emit(3)
-            return
+        # 先从增量包中提取新版本更新器覆盖旧文件，避免重命名操作
+        self._extract_updater_from_package()
 
         try:
             self._start_updater()
