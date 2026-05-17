@@ -863,7 +863,33 @@ def _copy_temp_to_root(temp_dir: Path, *, verbose: bool = False):
             src_file = os.path.join(root_dir, file)
             dest_file = os.path.join(dest_root, file)
             os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-            shutil.copy2(src_file, dest_file)
+
+            # 跳过复制更新器自身的可执行文件
+            # （已在 MAH.exe 中通过 _extract_updater_from_package 提前覆盖）
+            _self_exe = os.path.normcase(os.path.abspath(sys.executable))
+            if os.path.normcase(os.path.abspath(dest_file)) == _self_exe:
+                update_logger.info("跳过复制自身的可执行文件: %s", dest_file)
+                continue
+
+            try:
+                shutil.copy2(src_file, dest_file)
+            except (PermissionError, OSError) as copy_err:
+                # 文件被当前更新器进程锁定（如 _internal/ 中的 DLL），
+                # 使用 Windows 重启后替换机制。
+                if sys.platform.startswith("win32"):
+                    tmp_path = dest_file + ".mahtmp"
+                    try:
+                        shutil.copy2(src_file, tmp_path)
+                    except Exception:
+                        raise copy_err
+                    import ctypes
+                    MoveFileEx = ctypes.windll.kernel32.MoveFileExW
+                    MoveFileEx(tmp_path, dest_file, 0x4)  # MOVEFILE_DELAY_UNTIL_REBOOT
+                    update_logger.warning(
+                        "文件被占用，已安排重启后替换: %s", dest_file
+                    )
+                else:
+                    raise
             if sys.platform != "win32" and os.path.basename(dest_file) in {
                 "MFW",
                 "MFWUpdater",
@@ -2035,7 +2061,12 @@ def standard_update():
         sys.exit(error_message)
 
     # 重启程序
-    print("重启MFW程序...")
+    print("")
+    print("=" * 50)
+    print("  更新完成！正在启动主程序...")
+    print("=" * 50)
+    print("")
+    time.sleep(1.5)
     start_mfw_process()
 
 

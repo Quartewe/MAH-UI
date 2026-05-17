@@ -383,8 +383,7 @@ def launch_updater_process(*extra_args: str) -> None:
         if not sys.platform.startswith("win32"):
             return 0
         flags = 0
-        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        flags |= getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
         return flags
 
