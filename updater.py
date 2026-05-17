@@ -1702,6 +1702,11 @@ def _apply_hotfix_by_diff(
         if protected and _is_relative_under_any(relative, protected):
             skipped_count += 1
             continue
+        # 保护根层级 interface 配置文件，防止热更包覆盖项目的自定义配置
+        if len(relative.parts) == 1 and relative.name.lower() in {"interface.json", "interface.jsonc"}:
+            update_logger.debug("[步骤5] 保护根层级接口配置: %s", relative)
+            skipped_count += 1
+            continue
 
         target_file = project_path / relative
 

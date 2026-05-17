@@ -688,6 +688,11 @@ class BaseUpdate(QThread):
             if protected and self._is_under_any(relative, protected):
                 skipped_count += 1
                 continue
+            # 保护根层级 interface 配置文件，防止热更包覆盖项目的自定义配置
+            if len(relative.parts) == 1 and relative.name.lower() in {"interface.json", "interface.jsonc"}:
+                logger.debug("[步骤5] 保护根层级接口配置: %s", relative)
+                skipped_count += 1
+                continue
             target_file = project_path / relative
 
             should_apply = True
@@ -1105,9 +1110,11 @@ class BaseUpdate(QThread):
             return {"status": "no_need", "msg": self.tr("current version is latest")}
         return mirror_data
 
-    def github_check(self, project_url: str, version: str):
+    def github_check(self, project_url: str, version: str, *, channel: str = "stable"):
         """
         检查 GitHub 上的更新。
+
+        channel 用于从 /releases 列表端点中按 alpha/beta/stable 筛选预发布版本。
         """
         logger.info(f"开始GitHub更新检查: {project_url}")
         response = None
@@ -1117,7 +1124,20 @@ class BaseUpdate(QThread):
                 logger.warning(f"GitHub请求失败: {response.get('msg')}")
                 return response
 
-            update_dict: dict[str, dict] | dict[str, str] = response.json()
+            raw_data = response.json()
+
+            # /releases 返回列表，/releases/latest 返回单个对象
+            if isinstance(raw_data, list):
+                update_dict = self._pick_release_by_channel(raw_data, channel)
+                if update_dict is None:
+                    logger.info("GitHub: 未找到匹配频道 %s 的 release", channel)
+                    return {
+                        "status": "no_need",
+                        "msg": self.tr("current version is latest"),
+                    }
+            else:
+                update_dict: dict[str, dict] | dict[str, str] = raw_data
+
             logger.debug(f"GitHub响应数据: {jsonc.dumps(update_dict, indent=2)}")
 
             if "message" in update_dict and isinstance(update_dict["message"], str):
@@ -1142,6 +1162,25 @@ class BaseUpdate(QThread):
         except Exception as e:
             logger.exception(f"GitHub检查过程中发生未预期错误{e}")
             return {"status": "failed", "msg": str(e)}
+
+    @staticmethod
+    def _pick_release_by_channel(releases: list[dict], channel: str) -> dict | None:
+        """从 releases 列表中按频道筛选第一个匹配的 release。
+
+        - stable: 跳过 tag_name 含 "-alpha" 或 "-beta" 的预发布
+        - beta: 跳过含 "-alpha" 的，接受含 "-beta" 的
+        - alpha: 全部接受
+        """
+        for release in releases:
+            tag = str(release.get("tag_name", "") or "").lower()
+            if channel == "stable":
+                if "-alpha" in tag or "-beta" in tag:
+                    continue
+            elif channel == "beta":
+                if "-alpha" in tag:
+                    continue
+            return release
+        return None
 
     def clear_change(self, target_path):
         # 清理旧文件
@@ -1931,10 +1970,10 @@ class Update(BaseUpdate):
                             str(self.latest_update_version or "")
                         )
             # 步骤5: 完成
-            logger.info("[步骤5] 热更新成功完成!")
             # 软件增量更新后同步 agent 的 pip 依赖
             if self.update_target == "software":
                 self._ensure_agent_deps()
+            logger.info("[步骤5] 热更新成功完成!")
             logger.info("=" * 50)
             self._emit_info_bar("success", self.tr("Update applied successfully"))
             self._cleanup_update_artifacts(download_dir, zip_file_path)
@@ -2134,10 +2173,10 @@ class Update(BaseUpdate):
 
         if self.version_name and not self.force_full_download:
             github_api_url = self._form_github_url(
-                self.url, "download", self.version_name
+                self.url, "download", self.version_name, channel=self.current_channel
             )
         else:
-            github_api_url = self._form_github_url(self.url, "download")
+            github_api_url = self._form_github_url(self.url, "download", channel=self.current_channel)
         if not github_api_url:
             logger.warning("  [检查更新] GitHub: API 地址解析失败")
             return False
@@ -2148,6 +2187,7 @@ class Update(BaseUpdate):
         github_result = self.github_check(
             github_api_url,
             version="" if self.force_full_download else self.current_version,
+            channel=self.current_channel,
         )
 
         if not isinstance(github_result, dict):
@@ -2556,9 +2596,9 @@ class Update(BaseUpdate):
             return False
 
         if self.version_name and not self.force_full_download:
-            github_api_url = self._form_github_url(url, "download", self.version_name)
+            github_api_url = self._form_github_url(url, "download", self.version_name, channel=self.current_channel)
         else:
-            github_api_url = self._form_github_url(url, "download")
+            github_api_url = self._form_github_url(url, "download", channel=self.current_channel)
         if not github_api_url:
             logger.warning("  [检查更新] GitHub: API 地址解析失败")
             return False
@@ -2569,6 +2609,7 @@ class Update(BaseUpdate):
         github_result = self.github_check(
             github_api_url,
             version="" if self.force_full_download else fixed_version,
+            channel=self.current_channel,
         )
 
         if not isinstance(github_result, dict):
@@ -2669,7 +2710,7 @@ class Update(BaseUpdate):
         self.stop_signal.emit(code)
 
     def _form_github_url(
-        self, url: str, mode: str, version: str | None = None
+        self, url: str, mode: str, version: str | None = None, channel: str = "stable"
     ) -> str | None:
         """根据给定的URL和模式返回相应的链接。
 
@@ -2677,6 +2718,7 @@ class Update(BaseUpdate):
             url (str): GitHub项目的URL。
             mode (str): 模式（"issue"、"download"、"about"或"update_flag"）。
             version (str | None): 指定版本，仅在 update_flag 模式下使用。
+            channel (str): 更新频道（"stable"/"beta"/"alpha"），影响 releases 端点选择。
 
         Returns:
             str | None: 对应的链接。
@@ -2693,6 +2735,9 @@ class Update(BaseUpdate):
         elif mode == "download":
             if version:
                 return_url = f"https://api.github.com/repos/{username}/{repository}/releases/tags/{version}"
+            elif channel in ("alpha", "beta"):
+                # GitHub /releases/latest 会跳过 prerelease，alpha/beta 频道改用列表端点
+                return_url = f"https://api.github.com/repos/{username}/{repository}/releases?per_page=20"
             else:
                 return_url = f"https://api.github.com/repos/{username}/{repository}/releases/latest"
         elif mode == "about":
