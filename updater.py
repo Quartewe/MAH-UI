@@ -1433,7 +1433,10 @@ def _is_relative_under_any(relative: Path | str, parents: list[Path | str]) -> b
 
 def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
     """
-    软件增量更新时保护由 mah_res 合并而来的目录，避免被覆盖。
+    软件增量更新时保护不可被覆盖的目录。
+
+    - resource/index, resource/base/image/{ar,character}: 由 mah_res 合并而来
+    - _internal: PyInstaller 构建产物，被更新器进程锁定，热更新会导致 DLL 混合版本卡死
     """
     target = str((metadata or {}).get("target", "")).strip().lower()
     if target != "software":
@@ -1442,6 +1445,7 @@ def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
         Path("resource/index"),
         Path("resource/base/image/ar"),
         Path("resource/base/image/character"),
+        Path("_internal"),
     ]
 
 
