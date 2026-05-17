@@ -58,20 +58,11 @@ def _resolve_toolkit_runtime_dir() -> Path:
         "libMaaToolkit.dylib",
     )
 
-    candidates: List[Path] = []
-
-    runtimes_root = app_dir / "runtimes"
-    if runtimes_root.is_dir():
-        for native_dir in sorted(runtimes_root.glob("*/native")):
-            candidates.append(native_dir)
-
-    candidates.extend(
-        [
-            app_dir / "_internal" / "maa" / "bin",
-            app_dir / "maa" / "bin",
-            app_dir,
-        ]
-    )
+    candidates: List[Path] = [
+        app_dir / "_internal" / "maa" / "bin",
+        app_dir / "maa" / "bin",
+        app_dir,
+    ]
 
     for candidate in candidates:
         if candidate.is_dir() and any(
