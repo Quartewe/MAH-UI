@@ -4,11 +4,11 @@
 </p>
 <div align="center">
 
-# MFW-ChainFlow Assistant(链程助手)
+# MAH-UI
 
 **[简体中文](./README.md) | [English](./README-en.md)**
 
-基于 **[PySide6](https://doc.qt.io/qtforpython-6)** 与 **[MaaFramework](https://github.com/MaaXYZ/MaaFramework)** 的跨平台 GUI，完整支持 interface v2 协议，开箱即用地编排、运行和扩展自动化流程。
+基于 **[PySide6](https://doc.qt.io/qtforpython-6)** , **[MFW-ChainFlow Assistant](https://github.com/overflow65537/MFW-PyQt6)** 与 **[MaaFramework](https://github.com/MaaXYZ/MaaFramework)** 的跨平台 GUI，完整支持 interface v2 协议，开箱即用地编排、运行和扩展自动化流程。
 </div>
 
 <p align="center">

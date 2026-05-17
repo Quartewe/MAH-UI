@@ -2,11 +2,11 @@
 
 <div align="center">
 
-# MFW-ChainFlow Assistant
+# MAH-UI
 
 **[简体中文](./README.md) | [English](./README-en.md)**
 
-Cross-platform GUI built with **[PySide6](https://doc.qt.io/qtforpython-6)** and **[MaaFramework](https://github.com/MaaXYZ/MaaFramework)**, fully supporting interface v2 for orchestrating, running, and extending automation flows out of the box.
+Cross-platform GUI built with **[PySide6](https://doc.qt.io/qtforpython-6)** , **[MFW-ChainFlow Assistant](https://github.com/overflow65537/MFW-PyQt6)** and **[MaaFramework](https://github.com/MaaXYZ/MaaFramework)**, fully supporting interface v2 for orchestrating, running, and extending automation flows out of the box.
 </div>
 
 <p align="center">
