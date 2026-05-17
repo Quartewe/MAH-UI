@@ -2137,6 +2137,14 @@ def standard_update():
             "更新包已移动到备份目录，并将元数据一并转移: package=%s",
             package_path,
         )
+        # 清理 hotfix 临时目录
+        hotfix_dir = Path(os.getcwd()) / "hotfix"
+        if hotfix_dir.exists():
+            try:
+                shutil.rmtree(hotfix_dir)
+                update_logger.info("已清理 hotfix 临时目录: %s", hotfix_dir)
+            except Exception as exc:
+                update_logger.warning("清理 hotfix 目录失败: %s", exc)
     else:
         update_logger.error("更新文件处理失败")
         error_message = "更新文件处理失败"
