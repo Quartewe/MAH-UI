@@ -24,6 +24,7 @@ MFW-ChainFlow Assistant 配置
 
 
 import sys
+import json
 from pathlib import Path
 from enum import Enum
 
@@ -84,6 +85,20 @@ def _detect_default_background_image() -> str:
 
 class Config(QConfig):
     """Application configuration container."""
+    PRESERVED_GROUPS = {"MAH"}
+
+    def toDict(self, serialize=True):
+        data = super().toDict(serialize)
+        try:
+            if self.file.exists():
+                with open(self.file, "r", encoding="utf-8") as f:
+                    current = json.load(f)
+                for group in self.PRESERVED_GROUPS:
+                    if group in current and group not in data:
+                        data[group] = current[group]
+        except Exception:
+            pass
+        return data
 
     class LanguageSerializer(ConfigSerializer):
         """序列化 Language 枚举，方便写入/读取 settting."""

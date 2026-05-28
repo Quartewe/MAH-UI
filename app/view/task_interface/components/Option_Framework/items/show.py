@@ -147,6 +147,10 @@ class ShowOptionItem(OptionItemBase):
         mode = node.get("mode") or ""
         return str(mode).strip().lower()
 
+    def _extract_node_json_path(self, node: Dict[str, Any]) -> str:
+        json_path = node.get("json_path") or ""
+        return str(json_path).strip()
+
     def _create_show_node_widget(self, node: Dict[str, Any], depth: int = 0) -> QWidget:
         container = SimpleCardWidget()
         container.setBorderRadius(8)
@@ -202,6 +206,9 @@ class ShowOptionItem(OptionItemBase):
             if path:
                 try:
                     source_text, resolved_path = self._load_source_text(path)
+                    json_path = self._extract_node_json_path(node)
+                    if json_path:
+                        source_text = self._extract_json_path_text(source_text, json_path)
                     viewer = self._create_content_viewer(source_text, resolved_path, mode)
                     content_layout.addWidget(viewer)
                 except Exception as exc:
@@ -294,6 +301,27 @@ class ShowOptionItem(OptionItemBase):
             return resolved.read_text(encoding="utf-8"), resolved
         except Exception:
             return text, None
+
+    def _extract_json_path_text(self, raw: str, json_path: str) -> str:
+        data = jsonc.loads(raw)
+        current: Any = data
+        for seg in json_path.split("."):
+            seg = seg.strip()
+            if not seg:
+                continue
+            if isinstance(current, dict):
+                if seg not in current:
+                    return "{}"
+                current = current[seg]
+                continue
+            if isinstance(current, list) and seg.isdigit():
+                current = current[int(seg)]
+                continue
+            return "{}"
+
+        if isinstance(current, (dict, list)):
+            return json.dumps(current, ensure_ascii=False, indent=2)
+        return json.dumps(current, ensure_ascii=False)
 
     def _resolve_placeholder_value(self, placeholder: str) -> Any:
         """解析 {a.b.c} 占位路径，从当前任务选项中取值。"""
