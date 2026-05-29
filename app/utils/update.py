@@ -688,11 +688,6 @@ class BaseUpdate(QThread):
             if protected and self._is_under_any(relative, protected):
                 skipped_count += 1
                 continue
-            # 保护根层级 interface 配置文件，防止热更包覆盖项目的自定义配置
-            if len(relative.parts) == 1 and relative.name.lower() in {"interface.json", "interface.jsonc"}:
-                logger.debug("[步骤5] 保护根层级接口配置: %s", relative)
-                skipped_count += 1
-                continue
             target_file = project_path / relative
 
             should_apply = True
@@ -711,6 +706,39 @@ class BaseUpdate(QThread):
                 skipped_count += 1
 
         return applied_count, skipped_count
+
+    def _log_hotfix_plan(
+        self,
+        hotfix_root: Path,
+        project_path: Path,
+        protected_dirs: list[Path | str] | None,
+    ) -> None:
+        protected = self._normalize_relative_protected_dirs(protected_dirs)
+        file_count = 0
+        protected_count = 0
+        interface_files: list[str] = []
+
+        for src_file in hotfix_root.rglob("*"):
+            if not src_file.is_file():
+                continue
+
+            file_count += 1
+            relative = src_file.relative_to(hotfix_root)
+            if len(relative.parts) == 1 and relative.name.lower() in {
+                "interface.json",
+                "interface.jsonc",
+            }:
+                interface_files.append(relative.as_posix())
+            if protected and self._is_under_any(relative, protected):
+                protected_count += 1
+
+        logger.info(
+            "[步骤5] 热更预览: 文件=%s, 根接口=%s, 保护目录跳过=%s, 目标=%s",
+            file_count,
+            interface_files or "无",
+            protected_count,
+            project_path,
+        )
 
     def _software_protected_dirs(self) -> list[Path]:
         """
@@ -1869,6 +1897,7 @@ class Update(BaseUpdate):
                         [str(p) for p in protected_dirs],
                     )
 
+                self._log_hotfix_plan(payload_root, project_path, protected_dirs)
                 applied_count, skipped_count = self._apply_hotfix_by_diff_with_protection(
                     payload_root,
                     project_path,
@@ -2897,6 +2926,7 @@ class MultiResourceUpdate(Update):
                     )
 
                 logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
+                self._log_hotfix_plan(payload_root, project_path, None)
                 applied_count, skipped_count = self._apply_hotfix_by_diff(
                     payload_root,
                     project_path,
