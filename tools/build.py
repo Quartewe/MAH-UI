@@ -171,6 +171,16 @@ temp_files_dir = os.path.join(internal_dir, "TEM_files")
 if os.path.isdir(temp_files_dir):
     shutil.copytree(temp_files_dir, dist_dir, dirs_exist_ok=True)
     shutil.rmtree(temp_files_dir)
+
+    # 清理 TEM_files 带来的非 Windows 原生插件，避免弹窗报错 0xc000012f
+    root_plugins_dir = os.path.join(dist_dir, "plugins")
+    if os.path.isdir(root_plugins_dir):
+        for entry in os.listdir(root_plugins_dir):
+            if entry != "win-x64":
+                entry_path = os.path.join(root_plugins_dir, entry)
+                if os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path)
+                    print(f"[INFO] 清理非 Windows 插件目录: {entry_path}")
 else:
     print(f"[WARN] Temporary files directory not found: {temp_files_dir}")
 
