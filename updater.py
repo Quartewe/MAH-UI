@@ -1277,7 +1277,7 @@ def _extract_zip_to_hotfix_dir(zip_path: str, extract_to: str) -> str | None:
                     )
                     break
 
-            if not interface_dir_parts:
+            if interface_dir_parts is None:
                 update_logger.warning(
                     "[步骤3] 未在更新包中找到 interface.json/interface.jsonc 文件，将解压所有文件"
                 )
@@ -1286,14 +1286,23 @@ def _extract_zip_to_hotfix_dir(zip_path: str, extract_to: str) -> str | None:
             update_logger.info("[步骤3] 开始解压文件...")
             print("[解压] 开始解压文件...")
             extracted_count = 0
-            total_to_extract = len([m for m in members if (not interface_dir_parts or tuple(Path(m.replace("\\", "/")).parts[:len(interface_dir_parts) if interface_dir_parts else 0]) == interface_dir_parts) and m.strip()])
+            total_to_extract = 0
+            for member in members:
+                member_path = Path(member.replace("\\", "/"))
+                member_parts = tuple(p for p in member_path.parts if p and p != ".")
+                if not member_parts:
+                    continue
+                if interface_dir_parts is None:
+                    total_to_extract += 1
+                elif member_parts[: len(interface_dir_parts)] == interface_dir_parts:
+                    total_to_extract += 1
             
             for idx, member in enumerate(members, 1):
                 member_path = Path(member.replace("\\", "/"))
                 member_parts = tuple(p for p in member_path.parts if p and p != ".")
 
                 # 如果找到了 interface 目录，只解压该目录下的文件
-                if interface_dir_parts:
+                if interface_dir_parts is not None:
                     if member_parts[: len(interface_dir_parts)] != interface_dir_parts:
                         continue
                     # 移除 interface 目录前缀
@@ -1605,12 +1614,6 @@ def _apply_hotfix_by_diff(
         if protected and _is_relative_under_any(relative, protected):
             skipped_count += 1
             continue
-        # 保护根层级 interface 配置文件，防止热更包覆盖项目的自定义配置
-        if len(relative.parts) == 1 and relative.name.lower() in {"interface.json", "interface.jsonc"}:
-            update_logger.debug("[步骤5] 保护根层级接口配置: %s", relative)
-            skipped_count += 1
-            continue
-
         target_file = project_path / relative
 
         # 跳过运行中的更新器自身，Windows 下无法覆盖正在执行的 exe
@@ -1637,6 +1640,54 @@ def _apply_hotfix_by_diff(
             skipped_count += 1
 
     return applied_count, skipped_count
+
+
+def _log_hotfix_plan(
+    hotfix_root: Path,
+    project_path: Path,
+    protected_dirs: list[Path | str] | None,
+) -> None:
+    protected = _normalize_relative_protected_dirs(protected_dirs)
+    file_count = 0
+    protected_count = 0
+    interface_files: list[str] = []
+    running_updater_skipped = False
+
+    try:
+        running_updater = Path(sys.argv[0]).resolve()
+    except Exception:
+        running_updater = None
+
+    for src_file in hotfix_root.rglob("*"):
+        if not src_file.is_file():
+            continue
+
+        file_count += 1
+        relative = src_file.relative_to(hotfix_root)
+        if len(relative.parts) == 1 and relative.name.lower() in {
+            "interface.json",
+            "interface.jsonc",
+        }:
+            interface_files.append(relative.as_posix())
+        if protected and _is_relative_under_any(relative, protected):
+            protected_count += 1
+
+        if running_updater is None:
+            continue
+        try:
+            if (project_path / relative).resolve() == running_updater:
+                running_updater_skipped = True
+        except Exception:
+            continue
+
+    update_logger.info(
+        "[步骤5] 热更预览: 文件=%s, 根接口=%s, 保护目录跳过=%s, 运行中更新器跳过=%s, 目标=%s",
+        file_count,
+        interface_files or "无",
+        protected_count,
+        running_updater_skipped,
+        project_path,
+    )
 
 
 def _update_interface_version(interface_paths: list[Path], version: str) -> bool:
@@ -1842,6 +1893,7 @@ def apply_github_hotfix(package_path, metadata=None):
             update_logger.info(
                 f"[步骤5] 开始差异覆盖项目目录: {payload_root} -> {project_path}"
             )
+            _log_hotfix_plan(payload_root, project_path, protected_dirs)
             applied_count, skipped_count = _apply_hotfix_by_diff(
                 payload_root,
                 project_path,
@@ -1860,15 +1912,8 @@ def apply_github_hotfix(package_path, metadata=None):
         update_logger.info("[步骤5] 热更新文件操作成功完成!")
         update_logger.info("=" * 50)
 
-        # 步骤6: 清理更新数据
-        update_logger.info("[步骤6] 开始清理更新数据...")
-        download_dir = Path(package_path).parent
-        metadata_file = str(download_dir / "update_metadata.json")
-        update_logger.info(
-            f"[步骤6] 准备清理: 更新包={package_path}, 元数据={metadata_file}"
-        )
-        cleanup_update_artifacts(package_path, metadata_file)
-        update_logger.info("[步骤6] 更新数据清理完成")
+        # 步骤6 由外层 standard_update 统一移动更新包与元数据到备份目录。
+        update_logger.info("[步骤6] 更新包与元数据保留给外层备份流程处理")
         update_logger.info("=" * 50)
         update_logger.info("[GitHub热更新] 热更新流程全部完成!")
         update_logger.info("=" * 50)
