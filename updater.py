@@ -1392,50 +1392,6 @@ def _get_resource_dirs_from_interface(interface_data: dict) -> list[Path]:
     return dirs
 
 
-def _strip_pipeline_dirs_from_hotfix(
-    hotfix_root: Path,
-    project_path: Path,
-    resource_dirs: list[Path],
-) -> int:
-    """
-    从热更包中移除 pipeline 目录，避免覆盖本地自定义 pipeline。
-    返回移除的 pipeline 目录数量。
-    """
-    removed_count = 0
-    processed_resources: set[Path] = set()
-
-    for resource_path in resource_dirs:
-        try:
-            relative_resource_path = resource_path.resolve().relative_to(
-                project_path.resolve()
-            )
-        except ValueError:
-            update_logger.debug(f"[步骤5] 跳过非项目内资源路径: {resource_path}")
-            continue
-
-        if relative_resource_path in processed_resources:
-            continue
-        processed_resources.add(relative_resource_path)
-
-        hotfix_resource_root = hotfix_root / relative_resource_path
-        if not hotfix_resource_root.is_dir():
-            continue
-
-        for pipeline_dir in hotfix_resource_root.rglob("pipeline"):
-            if not pipeline_dir.is_dir():
-                continue
-            try:
-                shutil.rmtree(pipeline_dir)
-                removed_count += 1
-                update_logger.info(f"[步骤5] 已跳过热更中的 pipeline 目录: {pipeline_dir}")
-            except Exception as strip_err:
-                update_logger.warning(
-                    f"[步骤5] 移除热更中的 pipeline 目录失败: {pipeline_dir} -> {strip_err}"
-                )
-
-    return removed_count
-
-
 def _file_sha256(file_path: Path) -> str:
     digest = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -1872,16 +1828,6 @@ def apply_github_hotfix(package_path, metadata=None):
             interface_paths, interface_data = _load_interface_data(bundle_path_obj)
             resource_dirs = _get_resource_dirs_from_interface(interface_data)
             update_logger.info(f"[步骤5] 获取到 {len(resource_dirs)} 个资源目录")
-
-            removed_pipeline_dirs = _strip_pipeline_dirs_from_hotfix(
-                payload_root,
-                project_path,
-                resource_dirs,
-            )
-            if removed_pipeline_dirs:
-                update_logger.info(
-                    f"[步骤5] 已保护本地 pipeline，热更包中共移除 {removed_pipeline_dirs} 个 pipeline 目录"
-                )
 
             protected_dirs = _software_protected_dirs_from_metadata(metadata)
             if protected_dirs:
