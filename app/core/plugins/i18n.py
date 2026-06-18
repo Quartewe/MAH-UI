@@ -9,7 +9,7 @@ def get_current_ui_language_code() -> str:
     """返回当前 UI 语言代码。"""
     current = cfg.get(cfg.language)
     if current == Language.CHINESE_TRADITIONAL:
-        return "zh_hk"
+        return "zh_tw"
     if current == Language.ENGLISH:
         return "en_us"
     if current == Language.JAPANESE:
@@ -19,6 +19,8 @@ def get_current_ui_language_code() -> str:
 
 def _build_lang_fallback_chain(language_code: str) -> list[str]:
     normalized = str(language_code or "zh_cn").strip().lower().replace("-", "_")
+    if normalized == "zh_hk":
+        normalized = "zh_tw"
     candidates = [normalized]
 
     if "_" in normalized:
@@ -26,7 +28,7 @@ def _build_lang_fallback_chain(language_code: str) -> list[str]:
         candidates.append(base)
 
     if normalized.startswith("zh"):
-        candidates.extend(["zh_cn", "zh_hk", "zh"])
+        candidates.extend(["zh_tw", "zh_cn", "zh"])
     elif normalized.startswith("ja"):
         candidates.extend(["ja_jp", "ja"])
     elif normalized.startswith("en"):

@@ -264,8 +264,8 @@ if __name__ == "__main__":
         _load_gallery_translation("i18n.zh_CN.qm", "i18n.zh_CN.ts", "简体中文")
         language_code = "zh_cn"
     elif locale == Language.CHINESE_TRADITIONAL:
-        _load_gallery_translation("i18n.zh_HK.qm", "i18n.zh_HK.ts", "繁体中文")
-        language_code = "zh_hk"
+        _load_gallery_translation("i18n.zh_TW.qm", "i18n.zh_TW.ts", "繁体中文")
+        language_code = "zh_tw"
     elif locale == Language.ENGLISH:
         language_code = "en_us"
         logger.info("加载英文翻译")

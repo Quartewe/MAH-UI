@@ -23,7 +23,7 @@ class I18nService:
 
     def __init__(self, language: str = "zh_cn") -> None:
         # 当前默认语言
-        self._current_language: str = language
+        self._current_language: str = self._normalize_language(language)
         # 所有语言的翻译表: { language_code: { key: text } }
         self._translations: Dict[str, Dict[str, str]] = {}
 
@@ -36,9 +36,17 @@ class I18nService:
     def language(self, value: str) -> None:
         if not value:
             return
+        value = self._normalize_language(value)
         if value == self._current_language:
             return
         self._current_language = value
+
+    @staticmethod
+    def _normalize_language(language: str | None) -> str:
+        value = str(language or "zh_cn").strip().lower().replace("-", "_")
+        if value in {"zh_hk", "zh_mo"}:
+            return "zh_tw"
+        return value or "zh_cn"
 
     def load_translations_from_interface(
         self, interface_data: Dict[str, Any], interface_dir: Path
@@ -53,45 +61,20 @@ class I18nService:
         if not interface_data:
             return
 
-        lang = self._current_language
+        lang = self._normalize_language(self._current_language)
         languages = interface_data.get("languages", {})
 
-        # 支持繁体语言码双键兼容：zh_tw 与 zh_hk 可互相回退
-        candidate_keys = [lang]
-        if lang == "zh_tw":
-            candidate_keys.append("zh_hk")
-        elif lang == "zh_hk":
-            candidate_keys.append("zh_tw")
-
-        translation_file = None
-        used_lang_key = None
-        for key in candidate_keys:
-            translation_file = languages.get(key)
-            if translation_file:
-                used_lang_key = key
-                break
+        translation_file = languages.get(lang)
 
         if not translation_file:
             logger.warning("未找到语言 %s 的翻译文件配置", lang)
             return
-
-        if used_lang_key and used_lang_key != lang:
-            logger.info(
-                "语言 %s 未直接配置，已回退使用 %s 对应翻译文件",
-                lang,
-                used_lang_key,
-            )
 
         translation_path = interface_dir / translation_file
         try:
             with open(translation_path, "r", encoding="utf-8") as f:
                 translations: Dict[str, str] = jsonc.load(f)
             self._translations[lang] = translations
-
-            # 繁体兼容缓存：保证后续按 zh_tw/zh_hk 任一语言码查询都可命中
-            if lang in ("zh_tw", "zh_hk"):
-                self._translations["zh_tw"] = translations
-                self._translations["zh_hk"] = translations
 
             logger.debug(
                 "已加载翻译文件: %s (%d 条翻译)",
@@ -115,7 +98,7 @@ class I18nService:
         if not label:
             return label
 
-        lang = language or self._current_language
+        lang = self._normalize_language(language or self._current_language)
 
         if label.startswith("$"):
             key = label[1:]
@@ -142,7 +125,7 @@ class I18nService:
         if "$" not in text:
             return text
 
-        lang = language or self._current_language
+        lang = self._normalize_language(language or self._current_language)
         mapping = self._translations.get(lang)
         if not mapping:
             return text

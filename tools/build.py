@@ -241,7 +241,7 @@ print(f"[INFO] UI plugins copied to: {dist_ui_plugins_dir}, count={copied_count}
 
 os.makedirs(os.path.join(os.getcwd(), "dist", "MAH", "app", "i18n"), exist_ok=True)
 # 复制i18n文件
-for qm_file in ["i18n.zh_CN.qm", "i18n.zh_HK.qm", "i18n.ja_JP.qm"]:
+for qm_file in ["i18n.zh_CN.qm", "i18n.zh_TW.qm", "i18n.ja_JP.qm"]:
     src_qm = os.path.join(os.getcwd(), "app", "i18n", qm_file)
     dst_qm = os.path.join(os.getcwd(), "dist", "MAH", "app", "i18n", qm_file)
     if os.path.exists(src_qm):

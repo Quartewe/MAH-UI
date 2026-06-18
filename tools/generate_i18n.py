@@ -114,7 +114,7 @@ project_root = os.getcwd()
 # 输出的 .ts 文件路径
 output_ts_files = [
     os.path.join(project_root, "app", "i18n", "i18n.zh_CN.ts"),
-    os.path.join(project_root, "app", "i18n", "i18n.zh_HK.ts"),
+    os.path.join(project_root, "app", "i18n", "i18n.zh_TW.ts"),
     os.path.join(project_root, "app", "i18n", "i18n.ja_JP.ts"),
 ]
 

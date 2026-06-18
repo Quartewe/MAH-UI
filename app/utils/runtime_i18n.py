@@ -24,7 +24,7 @@ _RUNTIME_TRANSLATORS_ATTR = "_mfw_runtime_translators"
 def map_locale_to_code(locale: Language) -> str:
     """将 Language 枚举映射到 interface 语言码。"""
     if locale == Language.CHINESE_TRADITIONAL:
-        return "zh_hk"
+        return "zh_tw"
     if locale == Language.ENGLISH:
         return "en_us"
     if locale == Language.JAPANESE:
@@ -50,7 +50,7 @@ def apply_runtime_translations(app: QApplication, locale: Language) -> str:
     根据目标语言安装 Qt 翻译器（支持运行时重复调用）。
 
     Returns:
-        str: 对应的语言码（zh_cn / zh_hk / en_us / ja_jp）
+        str: 对应的语言码（zh_cn / zh_tw / en_us / ja_jp）
     """
     _remove_previous_translators(app)
 
@@ -62,7 +62,7 @@ def apply_runtime_translations(app: QApplication, locale: Language) -> str:
 
     mapping = {
         "zh_cn": ("i18n.zh_CN.qm", "i18n.zh_CN.ts", "简体中文"),
-        "zh_hk": ("i18n.zh_HK.qm", "i18n.zh_HK.ts", "繁体中文"),
+        "zh_tw": ("i18n.zh_TW.qm", "i18n.zh_TW.ts", "繁体中文"),
         "ja_jp": ("i18n.ja_JP.qm", "i18n.ja_JP.ts", "日语"),
     }
 
