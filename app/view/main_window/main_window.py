@@ -3272,6 +3272,7 @@ class MainWindow(MSFluentWindow):
         """设置窗口标题"""
         meta = self.service_coordinator.task.interface or {}
         from app.common.__version__ import __version__
+        from app.core.service.interface_manager import get_interface_manager
 
         app_version = str(meta.get("version", "") or "").strip() or __version__
         app_name = str(meta.get("name", "") or "").strip()
@@ -3315,6 +3316,14 @@ class MainWindow(MSFluentWindow):
 
         if not app_name:
             app_name = app_display_name
+        try:
+            explicit_title = str(meta.get("title", "") or "").strip()
+            if explicit_title:
+                app_name = explicit_title
+            else:
+                app_name = get_interface_manager().resolve_display_name(app_name)
+        except Exception as exc:
+            logger.debug("解析 interface 展示名失败，使用原始名称: %s", exc)
 
         app_has_update = app_version_display.startswith("本体更新:")
         resource_has_update = resource_version_display.startswith("资源更新:")

@@ -12,6 +12,32 @@ from app.common.config import cfg, Language
 from app.utils.logger import logger
 from app.core.service.i18n_service import I18nService, get_i18n_service
 from app.utils.custom_builder import build_custom_bundle
+from app.utils.interface_display import (
+    resolve_interface_display_name,
+    resolve_interface_display_title,
+)
+from hotfix_extract import (
+    CFA_SETTING_FILENAME,
+    LEGACY_UPDATE_FLAG_FILENAME,
+    apply_cfa_embedded_to_interface,
+    read_cfa_setting,
+)
+
+
+def normalize_language_code(language: Optional[str]) -> str:
+    """Normalize legacy language codes to interface language codes."""
+    value = str(language or "zh_cn").strip().replace("-", "_").lower()
+    if value in {"zh_hk", "zh_mo"}:
+        return "zh_tw"
+    if value in {"zh_cn", "zh_sg"}:
+        return "zh_cn"
+    if value in {"zh_tw", "ja_jp", "en_us"}:
+        return value
+    if value == "ja":
+        return "ja_jp"
+    if value == "en":
+        return "en_us"
+    return value or "zh_cn"
 
 
 class InterfaceManager:
@@ -77,7 +103,7 @@ class InterfaceManager:
         if language_value == Language.CHINESE_SIMPLIFIED.value:
             return "zh_cn"
         if language_value == Language.CHINESE_TRADITIONAL.value:
-            return "zh_hk"
+            return "zh_tw"
         if language_value == Language.JAPANESE.value:
             return "ja_jp"
         if language_value == Language.ENGLISH.value:
@@ -87,7 +113,7 @@ class InterfaceManager:
         if qt_locale == Language.CHINESE_SIMPLIFIED:
             return "zh_cn"
         if qt_locale == Language.CHINESE_TRADITIONAL:
-            return "zh_hk"
+            return "zh_tw"
         if qt_locale == Language.JAPANESE:
             return "ja_jp"
         if qt_locale == Language.ENGLISH:
@@ -105,11 +131,11 @@ class InterfaceManager:
 
         Args:
             interface_path: interface 配置文件路径，默认为项目根目录下的 interface.jsonc 或 interface.json
-            language: 语言代码（如 "zh_cn", "en_us", "zh_hk"），默认从配置读取
+            language: 语言代码（如 "zh_cn", "en_us", "zh_tw"），默认从配置读取
         """
         desired_path = self._normalize_interface_path(interface_path)
         if language is not None:
-            desired_language = language
+            desired_language = normalize_language_code(language)
         elif not self._initialized and self._current_language == "zh_cn":
             # 首次初始化时根据配置自动探测语言
             desired_language = self._detect_language_from_config()
@@ -129,7 +155,7 @@ class InterfaceManager:
 
         self._interface_path = desired_path
         self._interface_dir = desired_path.parent if desired_path else Path.cwd()
-        self._current_language = desired_language
+        self._current_language = normalize_language_code(desired_language)
         # 更新 i18n 服务语言
         self._i18n_service = I18nService(language=self._current_language)
 
@@ -151,6 +177,8 @@ class InterfaceManager:
             logger.error(f"配置文件格式错误: {e}")
             self._original_interface = {}
             return
+
+        self._sync_embedded_from_cfa_setting()
 
         # 解析 import 字段：加载并合并其他 PI 文件中的 task 和 option
         self._resolve_imports()
@@ -300,6 +328,54 @@ class InterfaceManager:
             else:
                 base[key] = deepcopy(ov_val)
 
+    def _resolve_cfa_bundle_path(self) -> Path:
+        """Resolve the bundle root containing CFA_setting.json/update_flag.txt."""
+        interface_dir = self._interface_dir.resolve()
+        current = interface_dir
+        for _ in range(8):
+            if read_cfa_setting(current) is not None:
+                return current
+            if (
+                (current / CFA_SETTING_FILENAME).is_file()
+                or (current / LEGACY_UPDATE_FLAG_FILENAME).is_file()
+            ):
+                return current
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return interface_dir
+
+    def _sync_embedded_from_cfa_setting(self) -> None:
+        """Sync interface.agent.embedded from CFA_setting.json when present."""
+        if not self._original_interface or self._interface_path is None:
+            return
+
+        bundle_path = self._resolve_cfa_bundle_path()
+        changed = apply_cfa_embedded_to_interface(
+            self._original_interface, bundle_path
+        )
+        if not changed:
+            return
+
+        embedded = self._original_interface.get("agent", {}).get("embedded")
+        try:
+            with open(self._interface_path, "w", encoding="utf-8") as file:
+                jsonc.dump(
+                    self._original_interface,
+                    file,
+                    indent=4,
+                    ensure_ascii=False,
+                )
+            logger.info(
+                "已按 %s 同步 agent.embedded=%s 到 %s",
+                CFA_SETTING_FILENAME,
+                embedded,
+                self._interface_path.name,
+            )
+        except OSError as exc:
+            logger.error("写入 interface 配置失败 %s: %s", self._interface_path, exc)
+
     def _resolve_imports(self) -> None:
         """
         解析 interface 的 import 字段：
@@ -400,6 +476,26 @@ class InterfaceManager:
         """
         return self._original_interface
 
+    def resolve_display_title(self, default_name: str = "ChainFlow Assistant") -> str:
+        """Resolve the user-facing window title from interface metadata."""
+        if not self._initialized:
+            self.initialize()
+        return resolve_interface_display_title(
+            self._translated_interface,
+            self._original_interface,
+            default_name,
+        )
+
+    def resolve_display_name(self, default_name: str = "ChainFlow Assistant") -> str:
+        """Resolve the user-facing app/resource display name."""
+        if not self._initialized:
+            self.initialize()
+        return resolve_interface_display_name(
+            self._translated_interface,
+            self._original_interface,
+            default_name,
+        )
+
     def apply_agent_customization(self):
         """
         若 interface 中 agent 存在且设置了 embedded，则复制入口目录并生成 custom。
@@ -477,7 +573,7 @@ class InterfaceManager:
 
         Args:
             interface_path: 要加载的 interface 配置文件路径（json/jsonc）
-            language: 语言代码（如 "zh_cn", "en_us", "zh_hk"）。如果为 None：
+            language: 语言代码（如 "zh_cn", "en_us", "zh_tw"）。如果为 None：
                 - 若当前尚未初始化且语言为默认值，则按配置自动推断；
                 - 否则使用当前管理器的语言设置。
 
@@ -508,7 +604,7 @@ class InterfaceManager:
 
             # 选择语言（逻辑与 initialize 尽量保持一致）
             if language is not None:
-                self._current_language = language
+                self._current_language = normalize_language_code(language)
             elif not backup_initialized and self._current_language == "zh_cn":
                 self._current_language = self._detect_language_from_config()
             else:
@@ -550,6 +646,7 @@ class InterfaceManager:
         Args:
             language: 语言代码，如 "zh_cn", "en_us"
         """
+        language = normalize_language_code(language)
         if language == self._current_language:
             return
 
@@ -579,7 +676,7 @@ class InterfaceManager:
         """重新加载 interface 配置文件（热更新或路径/语言变更后调用）"""
         logger.info("重新加载 interface 配置文件...")
         desired_path = self._normalize_interface_path(interface_path)
-        desired_language = language or self._current_language
+        desired_language = normalize_language_code(language or self._current_language)
 
         self._reset_state()
         self.initialize(interface_path=desired_path, language=desired_language)
@@ -599,7 +696,7 @@ def get_interface_manager(
 
     Args:
         interface_path: interface 配置文件路径（可为 json/jsonc）
-        language: 语言代码（如 "zh_cn", "en_us", "zh_hk"），默认从配置读取
+        language: 语言代码（如 "zh_cn", "en_us", "zh_tw"），默认从配置读取
 
     Returns:
         InterfaceManager 实例

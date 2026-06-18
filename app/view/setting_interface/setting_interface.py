@@ -1953,6 +1953,15 @@ class SettingInterface(QWidget):
         metadata = self.interface_data or {}
         icon_path = metadata.get("icon", "")
         name = metadata.get("name", "")
+        display_name = name
+        try:
+            from app.core.service.interface_manager import get_interface_manager
+
+            display_name = get_interface_manager().resolve_display_name(
+                name or self.tr("ChainFlow Assistant")
+            )
+        except Exception as exc:
+            logger.debug("解析 interface 展示名失败，使用原始名称: %s", exc)
         # 保存项目名称，用于更新日志等功能
         self.name = name if name else "MFW_CFA"
         mah_current_version = metadata.get("version", "0.0.1")
@@ -1978,7 +1987,7 @@ class SettingInterface(QWidget):
         description = metadata.get("description", "")
         contact = metadata.get("contact", "")
 
-        self.resource_name_label.setText(name)
+        self.resource_name_label.setText(display_name)
         # 当前版本 / 最新版本 / UI版本 / MaaFW版本 水平展示
         from maa.library import Library
 
