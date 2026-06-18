@@ -101,6 +101,14 @@ from app.common.signal_bus import signalBus
 
 class MaaContextSink(ContextEventSink):
     def on_raw_notification(self, context: Context, msg: str, details: dict):
+        if msg == "Node.PipelineNode.Starting":
+            logger.info(
+                "当前 Pipeline 节点: %s (task_id=%s, node_id=%s)",
+                details.get("name", ""),
+                details.get("task_id", ""),
+                details.get("node_id", ""),
+            )
+
         focus_entry = (details.get("focus") or {}).get(msg)
         if not focus_entry:
             return
@@ -151,22 +159,6 @@ class MaaContextSink(ContextEventSink):
         detail: ContextEventSink.NodeNextListDetail,
     ):
         pass
-
-    def on_node_pipeline_node(
-        self,
-        context: Context,
-        noti_type: NotificationType,
-        detail: ContextEventSink.NodePipelineNodeDetail,
-    ):
-        if noti_type != NotificationType.Starting:
-            return
-
-        logger.info(
-            "当前 Pipeline 节点: %s (task_id=%s, node_id=%s)",
-            detail.name,
-            detail.task_id,
-            detail.node_id,
-        )
 
     def on_node_action(
         self,
