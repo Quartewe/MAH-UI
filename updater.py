@@ -391,6 +391,7 @@ def restore_files_from_backup(backup_dir):
     except Exception as e:
         print(f"恢复文件时出错: {e}")
 
+
 def extract_zip_file_with_validation(update_file_path):
     """
     解压指定的压缩文件，使用循环逐个文件解压并验证
@@ -418,7 +419,7 @@ def extract_zip_file_with_validation(update_file_path):
             total_files = len(file_list)
             print(f"[解压] 找到 {total_files} 个文件需要解压")
             update_logger.info(f"[解压] 找到 {total_files} 个文件需要解压")
-            
+
             extracted_count = 0
             for idx, file_info in enumerate(file_list, 1):
                 try:
@@ -438,9 +439,8 @@ def extract_zip_file_with_validation(update_file_path):
                     for sec in range(5, 0, -1):
                         print(f"  {sec}秒后继续...")
                         time.sleep(1)
-                    # 继续处理下一个文件
                     continue
-            
+
             print(f"[解压] 解压完成，共成功解压 {extracted_count}/{total_files} 个文件")
             update_logger.info(f"[解压] 解压完成，共成功解压 {extracted_count}/{total_files} 个文件")
         
@@ -812,7 +812,7 @@ def _extract_zip_to_temp(zip_path: Path):
             total_files = len(file_list)
             print(f"[解压] 找到 {total_files} 个文件需要解压到临时目录")
             update_logger.info(f"[解压] 找到 {total_files} 个文件需要解压到临时目录")
-            
+
             extracted_count = 0
             for idx, file_info in enumerate(file_list, 1):
                 try:
@@ -829,9 +829,8 @@ def _extract_zip_to_temp(zip_path: Path):
                     for sec in range(5, 0, -1):
                         print(f"  {sec}秒后继续...")
                         time.sleep(1)
-                    # 继续处理下一个文件
                     continue
-            
+
             print(f"[解压] 解压完成，共成功解压 {extracted_count}/{total_files} 个文件")
             update_logger.info(f"[解压] 解压完成，共成功解压 {extracted_count}/{total_files} 个文件")
         return temp_dir
@@ -1341,6 +1340,12 @@ def _extract_zip_to_hotfix_dir(zip_path: str, extract_to: str) -> str | None:
             update_logger.info(f"[步骤3] 文件解压完成，共解压 {extracted_count} 个文件")
             print(f"[解压] 文件解压完成，共解压 {extracted_count} 个文件")
 
+            from hotfix_extract import extract_agent_folder_from_archive
+
+            if not extract_agent_folder_from_archive(zip_path, extract_to_path):
+                update_logger.error("[步骤3] 提取 agent 目录失败")
+                return None
+
             # 返回解压后的根目录
             return str(extract_to_path)
     except Exception as exc:
@@ -1369,26 +1374,51 @@ def _load_interface_data(bundle_path: Path) -> tuple[list[Path], dict]:
     return interface_paths, {}
 
 
-def _get_resource_dirs_from_interface(interface_data: dict) -> list[Path]:
-    """从 interface 配置解析 resource.path，按原始 path 去重，仅保留存在的目录。"""
-    resource_list = interface_data.get("resource", [])
-    if not isinstance(resource_list, list):
-        return []
+def _get_resource_dirs_from_interface(
+    interface_data: dict,
+    bundle_base: Path | None = None,
+) -> list[Path]:
+    """从 interface 解析 resource.path 与 controller.attach_resource_path。"""
     seen: set[str] = set()
     dirs: list[Path] = []
-    for resource in resource_list:
-        if not isinstance(resource, dict):
-            continue
-        raw_paths = resource.get("path", [])
-        if not isinstance(raw_paths, list):
-            continue
-        for raw_path in raw_paths:
-            if not isinstance(raw_path, str) or raw_path in seen:
+
+    def _try_add(raw_path: object) -> None:
+        if not isinstance(raw_path, str):
+            return
+        stripped = raw_path.strip()
+        if not stripped or stripped in seen:
+            return
+        seen.add(stripped)
+        if bundle_base is not None:
+            normalized = stripped.replace("{PROJECT_DIR}", "").strip().lstrip("\\/")
+            if not normalized:
+                return
+            resolved = (bundle_base / normalized).resolve()
+        else:
+            resolved = Path(stripped.replace("{PROJECT_DIR}", "."))
+        if resolved.is_dir():
+            dirs.append(resolved)
+
+    resource_list = interface_data.get("resource", [])
+    if isinstance(resource_list, list):
+        for resource in resource_list:
+            if not isinstance(resource, dict):
                 continue
-            seen.add(raw_path)
-            resolved = Path(raw_path.replace("{PROJECT_DIR}", "."))
-            if resolved.is_dir():
-                dirs.append(resolved)
+            raw_paths = resource.get("path", [])
+            if isinstance(raw_paths, list):
+                for raw_path in raw_paths:
+                    _try_add(raw_path)
+
+    controller_list = interface_data.get("controller", [])
+    if isinstance(controller_list, list):
+        for controller in controller_list:
+            if not isinstance(controller, dict):
+                continue
+            attach_paths = controller.get("attach_resource_path", [])
+            if isinstance(attach_paths, list):
+                for raw_path in attach_paths:
+                    _try_add(raw_path)
+
     return dirs
 
 
@@ -1647,29 +1677,11 @@ def _log_hotfix_plan(
 
 
 def _update_interface_version(interface_paths: list[Path], version: str) -> bool:
-    update_logger.info(f"[步骤5] 开始更新 interface 配置文件中的版本号为: {version}")
-    for path in interface_paths:
-        if not path.exists():
-            continue
-        interface = _read_config_file(str(path))
-        if not interface:
-            continue
-        old_version = interface.get("version", "unknown")
-        interface["version"] = version
-        try:
-            import jsonc
+    bundle_path = interface_paths[0].parent if interface_paths else Path.cwd()
+    from hotfix_extract import sync_interface_after_hotfix
 
-            with open(path, "w", encoding="utf-8") as f:
-                jsonc.dump(interface, f, indent=4, ensure_ascii=False)
-        except ImportError:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(interface, f, indent=4, ensure_ascii=False)
-        update_logger.info(
-            f"[步骤5] 版本号更新成功: {path.name} ({old_version} -> {version})"
-        )
-        return True
-    update_logger.warning("[步骤5] 未能更新 interface 配置文件中的版本号")
-    return False
+    update_logger.info(f"[步骤5] 开始更新 interface 配置文件中的版本号为: {version}")
+    return sync_interface_after_hotfix(interface_paths, version, bundle_path)
 
 
 def _update_interface_resource_version(interface_paths: list[Path], version: str) -> bool:
@@ -1826,7 +1838,12 @@ def apply_github_hotfix(package_path, metadata=None):
         else:
             update_logger.info("[步骤5] 读取 interface 配置文件...")
             interface_paths, interface_data = _load_interface_data(bundle_path_obj)
-            resource_dirs = _get_resource_dirs_from_interface(interface_data)
+            resource_dirs = _get_resource_dirs_from_interface(
+                interface_data,
+                bundle_path_obj.resolve()
+                if bundle_path_obj.is_absolute()
+                else (Path.cwd() / bundle_path_obj).resolve(),
+            )
             update_logger.info(f"[步骤5] 获取到 {len(resource_dirs)} 个资源目录")
 
             protected_dirs = _software_protected_dirs_from_metadata(metadata)
@@ -1889,7 +1906,7 @@ def apply_mirror_hotfix(package_path):
 
 def find_latest_zip_file(directory):
     """
-    查找目录中最新的 zip 包
+    查找目录中最新的 zip 包。
     """
     try:
         candidates = [

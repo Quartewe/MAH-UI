@@ -52,6 +52,13 @@ from app.common.config import cfg, Config
 from app.utils.crypto import crypto_manager
 from app.common.signal_bus import signalBus
 from app.core.core import ServiceCoordinator
+from hotfix_extract import (
+    CFA_SETTING_FILENAME,
+    LEGACY_UPDATE_FLAG_FILENAME,
+    cfa_setting_update_flag,
+    default_cfa_setting,
+    read_cfa_setting,
+)
 
 
 # region 更新
@@ -118,6 +125,23 @@ class BaseUpdate(QThread):
             verify = True
 
         def _derive_filename(resp: Response) -> str:
+            disposition = resp.headers.get("content-disposition", "")
+            filename_match = re.search(
+                r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?',
+                disposition,
+                re.IGNORECASE,
+            )
+            if filename_match:
+                filename = unquote(filename_match.group(1)).strip()
+                if filename:
+                    return filename
+
+            parsed_name = Path(unquote(urlparse(resp.url or url).path)).name
+            if parsed_name:
+                lowered = parsed_name.lower()
+                if lowered.endswith((".zip", ".tar.gz", ".tgz")):
+                    return parsed_name
+
             return "update.zip"
 
         def _resolve_target_location(base_path: Path, filename: str) -> Path:
@@ -203,10 +227,26 @@ class BaseUpdate(QThread):
                 response.close()
 
     def extract_archive(
-        self, archive_path, extract_to, flatten_assets=False
+        self,
+        archive_path,
+        extract_to,
+        flatten_assets=False,
+        *,
+        classic_archives_only: bool = False,
     ) -> Path | None:
         target_path = Path(archive_path)
         normalized_name = target_path.name.lower()
+
+        if classic_archives_only and not (
+            normalized_name.endswith(".zip")
+            or normalized_name.endswith(".tar.gz")
+            or normalized_name.endswith(".tgz")
+        ):
+            logger.warning(
+                "当前热更路径仅支持 zip 与 tar.gz/tgz: %s",
+                target_path.name,
+            )
+            return None
 
         if normalized_name.endswith(".tar.gz") or normalized_name.endswith(".tgz"):
             archive_type = "tar"
@@ -223,8 +263,20 @@ class BaseUpdate(QThread):
             target_path, extract_to, flatten_assets, archive_type
         )
 
-    def extract_zip(self, zip_file_path, extract_to, flatten_assets=False):
-        return self.extract_archive(zip_file_path, extract_to, flatten_assets)
+    def extract_zip(
+        self,
+        zip_file_path,
+        extract_to,
+        flatten_assets=False,
+        *,
+        classic_archives_only: bool = False,
+    ):
+        return self.extract_archive(
+            zip_file_path,
+            extract_to,
+            flatten_assets,
+            classic_archives_only=classic_archives_only,
+        )
 
     def _perform_archive_extraction(
         self,
@@ -261,7 +313,7 @@ class BaseUpdate(QThread):
                     final_root = self._resolve_final_root(
                         extract_to_path, interface_dir_parts
                     )
-            else:
+            elif archive_type == "tar":
                 with tarfile.open(archive_path, "r:*") as archive:
                     members = archive.getmembers()
                     member_names = [member.name for member in members]
@@ -278,6 +330,9 @@ class BaseUpdate(QThread):
                     final_root = self._resolve_final_root(
                         extract_to_path, interface_dir_parts
                     )
+            else:
+                logger.error("不支持的 archive_type: %s", archive_type)
+                return None
 
             if flatten_assets and final_root:
                 self._normalize_assets_package(final_root)
@@ -595,7 +650,9 @@ class BaseUpdate(QThread):
         dir_names = {entry.name.lower() for entry in entries if entry.is_dir()}
         return {"image", "index"}.issubset(dir_names)
 
-    def _apply_resource_hotfix(self, payload_root: Path, project_path: Path) -> tuple[int, int, int, int]:
+    def _apply_resource_hotfix(
+        self, payload_root: Path, project_path: Path
+    ) -> tuple[int, int, int, int]:
         """应用资源更新包：image -> resource/base/image，index -> resource/index。"""
         image_src = payload_root / "image"
         index_src = payload_root / "index"
@@ -1212,26 +1269,48 @@ class BaseUpdate(QThread):
             logger.error(f"获取 bundle 路径失败: {e}")
             return None
 
-    def _get_local_update_flag_path(self) -> str | None:
+    def _read_local_update_flag(self) -> str | None:
         bundle_path = self._get_bundle_path()
         if not bundle_path:
             return None
-        return os.path.join(bundle_path, "update_flag.txt")
-
-    def _read_local_update_flag(self) -> str | None:
-        flag_path = self._get_local_update_flag_path()
-        if not flag_path:
+        setting = read_cfa_setting(bundle_path)
+        if setting is None:
+            logger.warning(
+                "本地热更新配置不存在或无效（%s / %s）",
+                CFA_SETTING_FILENAME,
+                LEGACY_UPDATE_FLAG_FILENAME,
+            )
             return None
-        try:
-            with open(flag_path, "r", encoding="utf-8") as file:
-                return file.read().strip()
-        except FileNotFoundError:
-            logger.warning(f"本地 update_flag.txt 不存在: {flag_path}")
-        except Exception as exc:
-            logger.error(f"读取本地 update_flag 失败: {exc}")
-        return None
+        return cfa_setting_update_flag(setting)
 
-    def _fetch_remote_update_flag(self, url: str) -> str:
+    def _try_fetch_remote_cfa_setting(self, url: str) -> dict[str, Any] | None:
+        proxies = self.get_proxy_data()
+        response = None
+        try:
+            response = requests.get(
+                url, timeout=10, verify=self._ssl_verify(), proxies=proxies
+            )
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict) and "update_flag" in data:
+                return data
+            logger.warning("远端 %s 格式无效 (%s)", CFA_SETTING_FILENAME, url)
+            return None
+        except HTTPError as exc:
+            status = exc.response.status_code if exc.response else None
+            if status == 404:
+                logger.debug("远端 %s 不存在 (%s)", CFA_SETTING_FILENAME, url)
+                return None
+            logger.error("远端 %s 获取失败 (%s): %s", CFA_SETTING_FILENAME, url, exc)
+            return None
+        except (requests.RequestException, ValueError) as exc:
+            logger.error("远端 %s 获取失败 (%s): %s", CFA_SETTING_FILENAME, url, exc)
+            return None
+        finally:
+            if response:
+                response.close()
+
+    def _try_fetch_remote_legacy_update_flag(self, url: str) -> str | None:
         proxies = self.get_proxy_data()
         response = None
         try:
@@ -1243,23 +1322,66 @@ class BaseUpdate(QThread):
         except HTTPError as exc:
             status = exc.response.status_code if exc.response else None
             if status == 404:
-                logger.warning("远端 update_flag 不存在 (%s)", url)
-                return "1"
-            logger.error(f"远端 update_flag 获取失败 ({url}): {exc}")
-            return "1"
+                logger.debug("远端 %s 不存在 (%s)", LEGACY_UPDATE_FLAG_FILENAME, url)
+                return None
+            logger.error(
+                "远端 %s 获取失败 (%s): %s",
+                LEGACY_UPDATE_FLAG_FILENAME,
+                url,
+                exc,
+            )
+            return None
         except requests.RequestException as exc:
-            logger.error(f"远端 update_flag 获取失败 ({url}): {exc}")
-            return "1"
+            logger.error(
+                "远端 %s 获取失败 (%s): %s",
+                LEGACY_UPDATE_FLAG_FILENAME,
+                url,
+                exc,
+            )
+            return None
         finally:
             if response:
                 response.close()
 
-    def check_for_hotfix(self, url: str) -> bool:
+    def _fetch_remote_update_setting(
+        self,
+        cfa_setting_url: str | None,
+        legacy_update_flag_url: str | None = None,
+    ) -> dict[str, Any]:
+        if cfa_setting_url:
+            setting = self._try_fetch_remote_cfa_setting(cfa_setting_url)
+            if setting is not None:
+                return setting
+
+        if legacy_update_flag_url:
+            legacy_flag = self._try_fetch_remote_legacy_update_flag(
+                legacy_update_flag_url
+            )
+            if legacy_flag is not None:
+                logger.info("远端使用旧版 %s 作为热更新配置", LEGACY_UPDATE_FLAG_FILENAME)
+                return {"update_flag": legacy_flag}
+
+        logger.warning(
+            "远端热更新配置不可用（%s / %s），使用默认 update_flag",
+            CFA_SETTING_FILENAME,
+            LEGACY_UPDATE_FLAG_FILENAME,
+        )
+        return default_cfa_setting()
+
+    def check_for_hotfix(
+        self,
+        cfa_setting_url: str | None,
+        legacy_update_flag_url: str | None = None,
+    ) -> bool:
         local_flag = self._read_local_update_flag()
         if local_flag is None:
             return False
 
-        remote_flag = self._fetch_remote_update_flag(url)
+        remote_setting = self._fetch_remote_update_setting(
+            cfa_setting_url,
+            legacy_update_flag_url,
+        )
+        remote_flag = cfa_setting_update_flag(remote_setting)
         if remote_flag is None:
             return False
 
@@ -1724,35 +1846,48 @@ class Update(BaseUpdate):
 
             # 步骤2: 检查是否支持热更新
             if self.force_full_download:
-                logger.info("[步骤2] 强制下载模式，跳过 update_flag/hotfix 检查")
+                logger.info(
+                    "[步骤2] 强制下载模式，跳过 %s/%s/hotfix 检查",
+                    CFA_SETTING_FILENAME,
+                    LEGACY_UPDATE_FLAG_FILENAME,
+                )
             elif download_source == "github" and self.update_target == "software":
-                # 先使用检查阶段挑选到的增量包；未命中增量包时才走旧的 update_flag 逻辑。
+                # 先使用检查阶段挑选到的增量包；未命中增量包时才走旧配置兼容逻辑。
                 if hotfix:
-                    logger.info("[步骤2] 已匹配到软件增量包，跳过 update_flag 检查")
-                elif getattr(sys, "frozen", False):
-                    hotfix = False
-                    logger.info(
-                        "[步骤2] 当前为打包环境，未匹配到增量包，使用重启全量更新流程"
-                    )
+                    logger.info("[步骤2] 已匹配到软件增量包，跳过热更新配置检查")
                 else:
                     logger.info("[步骤2] 开始判断Github热更新支持...")
-                    update_flag_url = self._form_github_url(
+                    cfa_setting_url = self._form_github_url(
+                        self.url, "cfa_setting", str(self.latest_update_version)
+                    )
+                    legacy_update_flag_url = self._form_github_url(
                         self.url, "update_flag", str(self.latest_update_version)
                     )
-                    if not update_flag_url:
-                        logger.info("[步骤2] 无法获取 update_flag URL，跳过热更新")
-                        return self._stop_with_notice(2)
-
-                    logger.debug("[步骤2] update_flag URL: %s", update_flag_url)
-
-                    # 获取更新标志位判断是否可以热更新
-                    hotfix = self.check_for_hotfix(update_flag_url)
-                    logger.info("[步骤2]热更新支持: %s", hotfix)
-                    if hotfix and download_source == "github":
-                        download_url = self._form_github_url(
-                            self.url, "hotfix", str(self.latest_update_version)
+                    if not cfa_setting_url and not legacy_update_flag_url:
+                        logger.info("[步骤2] 无法获取热更新配置 URL，继续使用已选择的更新包")
+                    else:
+                        logger.debug(
+                            "[步骤2] %s URL: %s",
+                            CFA_SETTING_FILENAME,
+                            cfa_setting_url,
                         )
-                        logger.info("[步骤2] 热更新支持，更换下载地址: %s", download_url)
+                        logger.debug(
+                            "[步骤2] %s URL: %s",
+                            LEGACY_UPDATE_FLAG_FILENAME,
+                            legacy_update_flag_url,
+                        )
+
+                        # 获取更新标志位判断是否可以使用仓库 zipball 增量包。
+                        hotfix = self.check_for_hotfix(
+                            cfa_setting_url,
+                            legacy_update_flag_url,
+                        )
+                        logger.info("[步骤2]热更新支持: %s", hotfix)
+                        if hotfix and download_source == "github":
+                            download_url = self._form_github_url(
+                                self.url, "hotfix", str(self.latest_update_version)
+                            )
+                            logger.info("[步骤2] 热更新支持，更换下载地址: %s", download_url)
 
             self._emit_info_bar("info", self.tr("Preparing to download update..."))
 
@@ -1802,12 +1937,8 @@ class Update(BaseUpdate):
                 zip_file_path.name,
             )
 
-            if (
-                self.update_target == "software"
-                and hotfix
-                and getattr(sys, "frozen", False)
-            ):
-                logger.info("[步骤3] 打包环境的软件增量更新交由外部更新器执行，准备重启")
+            if self.update_target == "software":
+                logger.info("[步骤3] 软件/UI 更新交由外部更新器执行，准备重启")
                 self._mark_pending_release_version(
                     str(self.latest_update_version or "")
                 )
@@ -1842,8 +1973,11 @@ class Update(BaseUpdate):
                 payload_root,
             )
             if not resource_package:
-                self._normalize_hotfix_resource_layout(payload_root)
-                logger.debug("[步骤4] 已完成应用更新资源目录布局归并")
+                logger.warning(
+                    "[步骤4] 资源热更仅接受 image/index 包，当前包不是纯资源包，已取消应用"
+                )
+                self._cleanup_update_artifacts(download_dir, zip_file_path)
+                return self._stop_with_notice(0, "error", self.tr("Failed to update"))
 
             # 获取 bundle 路径
             bundle_path = self._get_bundle_path()
@@ -1877,57 +2011,6 @@ class Update(BaseUpdate):
                     logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
                 else:
                     logger.warning("[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本")
-            else:
-                removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
-                    payload_root,
-                    project_path,
-                )
-                if removed_pipeline_dirs:
-                    logger.info(
-                        "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
-                        removed_pipeline_dirs,
-                    )
-
-                logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-                protected_dirs: list[Path] | None = None
-                if self.update_target == "software":
-                    protected_dirs = self._software_protected_dirs()
-                    logger.info(
-                        "[步骤5] 软件增量更新保护目录: %s",
-                        [str(p) for p in protected_dirs],
-                    )
-
-                self._log_hotfix_plan(payload_root, project_path, protected_dirs)
-                applied_count, skipped_count = self._apply_hotfix_by_diff_with_protection(
-                    payload_root,
-                    project_path,
-                    protected_dirs,
-                )
-                logger.info(
-                    "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
-                    applied_count,
-                    skipped_count,
-                )
-
-                if self.update_target == "resource":
-                    if self._sync_interface_resource_version(
-                        bundle_path_obj,
-                        self.latest_update_version,
-                    ):
-                        logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
-                    else:
-                        logger.warning(
-                            "[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本"
-                        )
-                else:
-                    if self._sync_interface_version(
-                        bundle_path_obj,
-                        self.latest_update_version,
-                    ):
-                        logger.info("[步骤5] interface 配置同步完毕")
-                        self._mark_pending_release_version(
-                            str(self.latest_update_version or "")
-                        )
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
             logger.info("=" * 50)
@@ -2270,9 +2353,7 @@ class Update(BaseUpdate):
             if not isinstance(asset_name, str):
                 continue
             normalized_name = asset_name.lower()
-            if normalized_name.endswith(".tar.gz"):
-                pass
-            elif normalized_name.endswith(".zip"):
+            if normalized_name.endswith((".zip", ".tar.gz", ".tgz")):
                 pass
             else:
                 continue
@@ -2307,7 +2388,7 @@ class Update(BaseUpdate):
 
         def _is_archive(name: str) -> bool:
             lowered = name.lower()
-            return lowered.endswith(".zip") or lowered.endswith(".tar.gz")
+            return lowered.endswith((".zip", ".tar.gz", ".tgz"))
 
         def _version_score(name: str) -> int:
             lowered = name.lower()
@@ -2382,7 +2463,7 @@ class Update(BaseUpdate):
 
         def _is_archive(name: str) -> bool:
             lowered = name.lower()
-            return lowered.endswith(".zip") or lowered.endswith(".tar.gz")
+            return lowered.endswith((".zip", ".tar.gz", ".tgz"))
 
         def _score(name: str) -> int:
             lowered = name.lower()
@@ -2672,8 +2753,8 @@ class Update(BaseUpdate):
 
         Args:
             url (str): GitHub项目的URL。
-            mode (str): 模式（"issue"、"download"、"about"或"update_flag"）。
-            version (str | None): 指定版本，仅在 update_flag 模式下使用。
+            mode (str): 模式（"issue"、"download"、"about"、"cfa_setting"或"update_flag"）。
+            version (str | None): 指定版本，仅在 cfa_setting / update_flag 模式下使用。
             channel (str): 更新频道（"stable"/"beta"/"alpha"），影响 releases 端点选择。
 
         Returns:
@@ -2698,10 +2779,14 @@ class Update(BaseUpdate):
                 return_url = f"https://api.github.com/repos/{username}/{repository}/releases/latest"
         elif mode == "about":
             return_url = f"https://github.com/{username}/{repository}"
+        elif mode == "cfa_setting":
+            if not version:
+                return None
+            return_url = f"https://raw.githubusercontent.com/{username}/{repository}/{version}/{CFA_SETTING_FILENAME}"
         elif mode == "update_flag":
             if not version:
                 return None
-            return_url = f"https://raw.githubusercontent.com/{username}/{repository}/{version}/update_flag.txt"
+            return_url = f"https://raw.githubusercontent.com/{username}/{repository}/{version}/{LEGACY_UPDATE_FLAG_FILENAME}"
         elif mode == "hotfix":
             if not version:
                 return None
@@ -2878,8 +2963,11 @@ class MultiResourceUpdate(Update):
                 payload_root,
             )
             if not resource_package:
-                self._normalize_hotfix_resource_layout(payload_root)
-                logger.debug("[步骤4] 已完成应用更新资源目录布局归并")
+                logger.warning(
+                    "[步骤4] 多资源热更仅接受 image/index 包，当前包不是纯资源包，已取消应用"
+                )
+                self._cleanup_update_artifacts(download_dir, zip_file_path)
+                return self._stop_with_notice(0, "error", self.tr("Failed to update"))
 
             # 获取 bundle 路径
             bundle_path = self._get_bundle_path()
@@ -2914,48 +3002,6 @@ class MultiResourceUpdate(Update):
                     logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
                 else:
                     logger.warning("[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本")
-            else:
-                removed_pipeline_dirs = self._strip_pipeline_dirs_from_hotfix(
-                    payload_root,
-                    project_path,
-                )
-                if removed_pipeline_dirs:
-                    logger.info(
-                        "[步骤5] 已保护本地 pipeline，热更包中共移除 %s 个 pipeline 目录",
-                        removed_pipeline_dirs,
-                    )
-
-                logger.info("[步骤5] 开始覆盖项目目录: %s", project_path)
-                self._log_hotfix_plan(payload_root, project_path, None)
-                applied_count, skipped_count = self._apply_hotfix_by_diff(
-                    payload_root,
-                    project_path,
-                )
-                logger.info(
-                    "[步骤5] 差异应用完成: 应用 %s 个文件，跳过 %s 个未变化文件",
-                    applied_count,
-                    skipped_count,
-                )
-
-                if self.update_target == "resource":
-                    if self._sync_interface_resource_version(
-                        bundle_path_obj,
-                        self.latest_update_version,
-                    ):
-                        logger.info("[步骤5][资源更新] interface 资源版本同步完毕")
-                    else:
-                        logger.warning(
-                            "[步骤5][资源更新] interface 资源版本同步失败，界面可能显示旧版本"
-                        )
-                else:
-                    if self._sync_interface_version(
-                        bundle_path_obj,
-                        self.latest_update_version,
-                    ):
-                        logger.info("[步骤5] interface 配置同步完毕")
-                        self._mark_pending_release_version(
-                            str(self.latest_update_version or "")
-                        )
 
             # 步骤5: 完成
             logger.info("[步骤5] 热更新成功完成!")
