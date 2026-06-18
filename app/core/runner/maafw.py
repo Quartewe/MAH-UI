@@ -152,6 +152,22 @@ class MaaContextSink(ContextEventSink):
     ):
         pass
 
+    def on_node_pipeline_node(
+        self,
+        context: Context,
+        noti_type: NotificationType,
+        detail: ContextEventSink.NodePipelineNodeDetail,
+    ):
+        if noti_type != NotificationType.Starting:
+            return
+
+        logger.info(
+            "当前 Pipeline 节点: %s (task_id=%s, node_id=%s)",
+            detail.name,
+            detail.task_id,
+            detail.node_id,
+        )
+
     def on_node_action(
         self,
         context: Context,
