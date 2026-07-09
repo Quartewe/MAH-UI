@@ -3,16 +3,42 @@
 从 form_structure 生成选项表单，包含多个选项项组件
 """
 import warnings
+from copy import deepcopy
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
+from qfluentwidgets import BodyLabel, SwitchButton
 from app.utils.logger import logger
+from app.core.utils.option_binding import (
+    BINDING_ACTIVE_KEY,
+    binding_value_key,
+    get_active_target_entry,
+    get_binding_active_map,
+    iter_binding_sources,
+    normalize_target_entries,
+    option_payload_value,
+    upsert_entry_by_value,
+    ensure_entry_payload,
+)
 from app.view.task_interface.components.Option_Framework.items import (
     OptionItemBase,
     OptionItemRegistry,
 )
+from app.view.task_interface.components.Option_Framework.animations import HeightAnimator
 
 if TYPE_CHECKING:
     from app.view.task_interface.components.Option_Framework.items import OptionItemBase
+
+
+class _ClickableHeader(QWidget):
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class OptionFormWidget(QWidget):
@@ -30,6 +56,13 @@ class OptionFormWidget(QWidget):
         super().__init__(parent)
         self.option_items: Dict[str, "OptionItemBase"] = {}  # 选项项组件字典
         self.form_structure: Dict[str, Any] = {}  # 表单结构
+        self.binding_global_switches: Dict[str, SwitchButton] = {}
+        self._task_config_snapshot: Dict[str, Any] = {}
+        self.binding_global_panel: Optional[QWidget] = None
+        self._binding_global_content: Optional[QWidget] = None
+        self._binding_global_header_arrow: Optional[BodyLabel] = None
+        self._binding_global_animator: Optional[HeightAnimator] = None
+        self._binding_global_expanded = False
         
         self._init_ui()
     
@@ -47,6 +80,7 @@ class OptionFormWidget(QWidget):
         :param config: 可选的初始配置字典
         """
         self.form_structure = form_structure
+        self._task_config_snapshot = deepcopy(config or {})
         
         # 清空现有的选项项
         self._clear_options()
@@ -76,6 +110,9 @@ class OptionFormWidget(QWidget):
             
             # 添加到布局
             self.main_layout.addWidget(option_item)
+
+        self._build_binding_global_panel()
+        self._sync_binding_global_switches(config or {})
         
         # 如果有初始配置，应用它
         if config:
@@ -140,6 +177,12 @@ class OptionFormWidget(QWidget):
         
         # 清空选项项字典
         self.option_items.clear()
+        self.binding_global_switches.clear()
+        self.binding_global_panel = None
+        self._binding_global_content = None
+        self._binding_global_header_arrow = None
+        self._binding_global_animator = None
+        self._binding_global_expanded = False
         
         # 删除所有布局
         for layout in layouts_to_delete:
@@ -187,6 +230,10 @@ class OptionFormWidget(QWidget):
         
         :param config: 配置字典
         """
+        self._task_config_snapshot = deepcopy(config or {})
+        self._sync_binding_global_switches(config)
+        config = self._prepare_config_for_binding(config)
+
         # 第一步：先隐藏所有子选项容器
         for option_item in self.option_items.values():
             if option_item.config_type in ["combobox", "switch", "checkbox"]:
@@ -198,25 +245,7 @@ class OptionFormWidget(QWidget):
         for key, value in config.items():
             if key in self.option_items:
                 option_item = self.option_items[key]
-                
-                if isinstance(value, dict):
-                    # 如果有 value 字段，提取出来
-                    if "value" in value:
-                        # 先保存 children 配置，等设置完值后再应用
-                        children_config = value.get("children", {})
-                        
-                        # 设置选项值（这会触发 _update_children_visibility，只显示对应的子选项）
-                        option_item.set_value(value["value"])
-                        
-                        # 如果有 children 配置，在设置完值后应用当前选中值的子选项
-                        if children_config:
-                            self._apply_children_config(option_item, children_config)
-                    else:
-                        # 直接使用字典作为值
-                        option_item.set_value(value)
-                else:
-                    # 直接使用值
-                    option_item.set_value(value)
+                self._apply_option_item_config(option_item, value)
         
         # 第三步：最后确保所有选项项的子选项可见性正确（只显示当前选中值对应的子选项）
         # 注意：由于 set_value 已经调用了 _update_children_visibility，这里只需要处理那些没有通过 set_value 设置的选项
@@ -275,6 +304,20 @@ class OptionFormWidget(QWidget):
                     logger.warning(f"子选项类型 {child_widget.config_type} 不应该接收字典值: {child_config}")
         else:
             child_widget.set_value(child_config)
+
+    def _apply_option_item_config(
+        self, option_item: "OptionItemBase", value: Any
+    ) -> None:
+        if isinstance(value, dict):
+            if "value" in value:
+                children_config = value.get("children", {})
+                option_item.set_value(value["value"])
+                if children_config:
+                    self._apply_children_config(option_item, children_config)
+            else:
+                option_item.set_value(value)
+        else:
+            option_item.set_value(value)
     
     def _apply_children_config(self, option_item: "OptionItemBase", children_config: Dict[str, Any]):
         """
@@ -348,6 +391,14 @@ class OptionFormWidget(QWidget):
             if bool(option_item.config.get("non_persistent", False)):
                 continue
             result[key] = option_item.get_option()
+
+        result = self._apply_binding_to_options(result)
+        self._task_config_snapshot.update(deepcopy(result))
+        for source_key, _target_key in iter_binding_sources(
+            self.form_structure, logger=logger
+        ):
+            if source_key not in result:
+                self._task_config_snapshot.pop(source_key, None)
         
         return result
     
@@ -365,4 +416,230 @@ class OptionFormWidget(QWidget):
             result[key] = option_item.get_simple_option()
         
         return result
+
+    def _build_binding_global_panel(self) -> None:
+        binding_sources = list(iter_binding_sources(self.form_structure, logger=logger))
+        if not binding_sources:
+            return
+
+        panel = QFrame(self)
+        panel.setObjectName("BindingGlobalPanel")
+        panel.setStyleSheet(
+            """
+            QFrame#BindingGlobalPanel {
+                border: 1px solid rgba(128, 128, 128, 0.22);
+                border-radius: 6px;
+                margin-top: 6px;
+            }
+            """
+        )
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(8, 6, 8, 6)
+        panel_layout.setSpacing(4)
+
+        header = _ClickableHeader(panel)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+
+        arrow = BodyLabel(">")
+        arrow.setFixedWidth(14)
+        title = BodyLabel(self.tr("Global Settings"))
+        count_label = BodyLabel(
+            self.tr("{count} item(s)").format(count=len(binding_sources))
+        )
+        count_label.setStyleSheet("color: gray;")
+
+        header_layout.addWidget(arrow)
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(count_label)
+        panel_layout.addWidget(header)
+
+        content = QWidget(panel)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 4, 0, 0)
+        content_layout.setSpacing(4)
+
+        for source_key, _target_key in binding_sources:
+            option_item = self.option_items.get(source_key)
+            if option_item is None:
+                continue
+            self._add_binding_global_switch(source_key, option_item, content_layout)
+
+        panel_layout.addWidget(content)
+
+        self.binding_global_panel = panel
+        self._binding_global_content = content
+        self._binding_global_header_arrow = arrow
+        self._binding_global_animator = HeightAnimator(content, duration=180, parent=self)
+        self._binding_global_expanded = False
+        content.setVisible(False)
+        content.setMaximumHeight(0)
+        header.clicked.connect(self._toggle_binding_global_panel)
+
+        self.main_layout.addWidget(panel)
+
+    def _add_binding_global_switch(
+        self,
+        source_key: str,
+        option_item: "OptionItemBase",
+        parent_layout: QVBoxLayout,
+    ) -> None:
+        switch_container = QWidget(self.binding_global_panel or self)
+        switch_layout = QHBoxLayout(switch_container)
+        switch_layout.setContentsMargins(0, 2, 0, 2)
+        switch_layout.setSpacing(8)
+
+        label_text = str(option_item.config.get("label") or source_key)
+        label = BodyLabel(label_text)
+        switch_layout.addWidget(label)
+        switch_layout.addStretch()
+
+        switch = SwitchButton(parent=switch_container)
+        switch.setOnText(self.tr("On"))
+        switch.setOffText(self.tr("Off"))
+        switch_layout.addWidget(switch)
+
+        switch.checkedChanged.connect(
+            lambda _checked, key=source_key, item=option_item: item.option_changed.emit(
+                key, item.current_value
+            )
+        )
+        parent_layout.addWidget(switch_container)
+        self.binding_global_switches[source_key] = switch
+
+    def _toggle_binding_global_panel(self) -> None:
+        content = self._binding_global_content
+        animator = self._binding_global_animator
+        if content is None or animator is None:
+            return
+
+        self._binding_global_expanded = not self._binding_global_expanded
+        self._update_binding_global_header()
+
+        if self._binding_global_expanded:
+            animator.expand()
+        else:
+            animator.collapse()
+
+    def _update_binding_global_header(self) -> None:
+        if self._binding_global_header_arrow is not None:
+            self._binding_global_header_arrow.setText(
+                "v" if self._binding_global_expanded else ">"
+            )
+
+    def _sync_binding_global_switches(self, config: Dict[str, Any]) -> None:
+        for source_key, switch in self.binding_global_switches.items():
+            checked = self._is_binding_global_enabled(source_key, config)
+            switch.blockSignals(True)
+            try:
+                switch.setChecked(checked)
+            finally:
+                switch.blockSignals(False)
+
+    def _is_binding_global_enabled(
+        self, source_key: str, config: Dict[str, Any]
+    ) -> bool:
+        if source_key in (config or {}):
+            return True
+        target_key = self._binding_target_for_source(source_key)
+        if not target_key:
+            return True
+        active_entry = get_active_target_entry(config or {}, target_key)
+        if isinstance(active_entry, dict) and source_key in active_entry:
+            return False
+        return True
+
+    def _binding_target_for_source(self, source_key: str) -> Optional[str]:
+        for current_source, target_key in iter_binding_sources(
+            self.form_structure, logger=logger
+        ):
+            if current_source == source_key:
+                return target_key
+        return None
+
+    def _prepare_config_for_binding(
+        self, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        prepared = deepcopy(config or {})
+        for source_key, target_key in iter_binding_sources(
+            self.form_structure, logger=logger
+        ):
+            active_entry = get_active_target_entry(config or {}, target_key)
+            if active_entry:
+                prepared[target_key] = active_entry
+
+            if not self._is_binding_global_enabled(source_key, config or {}):
+                if isinstance(active_entry, dict) and source_key in active_entry:
+                    prepared[source_key] = active_entry[source_key]
+        return prepared
+
+    def _apply_binding_to_options(
+        self, raw_options: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        result = deepcopy(raw_options)
+        active_map = get_binding_active_map(self._task_config_snapshot)
+
+        for source_key, target_key in iter_binding_sources(
+            self.form_structure, logger=logger
+        ):
+            if target_key not in raw_options:
+                continue
+
+            target_payload = raw_options.get(target_key)
+            active_value = option_payload_value(target_payload)
+            active_map[target_key] = active_value
+
+            existing_payload = (
+                result.get(target_key)
+                if isinstance(result.get(target_key), list)
+                else self._task_config_snapshot.get(target_key)
+            )
+            entries = normalize_target_entries(existing_payload)
+            new_entry = ensure_entry_payload(target_payload)
+
+            if not self._is_binding_switch_global(source_key):
+                source_payload = raw_options.get(source_key)
+                if source_payload is not None:
+                    new_entry[source_key] = source_payload
+                result.pop(source_key, None)
+
+            result[target_key] = upsert_entry_by_value(entries, new_entry)
+
+        if active_map:
+            result[BINDING_ACTIVE_KEY] = active_map
+
+        return result
+
+    def _is_binding_switch_global(self, source_key: str) -> bool:
+        switch = self.binding_global_switches.get(source_key)
+        return True if switch is None else bool(switch.isChecked())
+
+    def prepare_binding_for_change(self, changed_key: str) -> None:
+        """Refresh source controls when a bound target switches active value."""
+        for source_key, target_key in iter_binding_sources(
+            self.form_structure, logger=logger
+        ):
+            if changed_key != target_key or self._is_binding_switch_global(source_key):
+                continue
+
+            source_item = self.option_items.get(source_key)
+            target_item = self.option_items.get(target_key)
+            if source_item is None or target_item is None:
+                continue
+
+            target_payload = target_item.get_option()
+            active_value = option_payload_value(target_payload)
+            active_key = binding_value_key(active_value)
+
+            for entry in normalize_target_entries(
+                self._task_config_snapshot.get(target_key)
+            ):
+                if binding_value_key(entry.get("value")) != active_key:
+                    continue
+                if source_key in entry:
+                    self._apply_option_item_config(source_item, entry[source_key])
+                break
 

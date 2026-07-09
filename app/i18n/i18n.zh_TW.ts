@@ -6023,6 +6023,29 @@ You can copy the detailed stack trace below and report it to the developer.</sou
         </message>
     </context>
     <context>
+        <name>OptionFormWidget</name>
+        <message>
+            <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="448" />
+            <source>Global Settings</source>
+            <translation>全域設定</translation>
+        </message>
+        <message>
+            <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="450" />
+            <source>{count} item(s)</source>
+            <translation>{count} 項</translation>
+        </message>
+        <message>
+            <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="501" />
+            <source>On</source>
+            <translation>開啟</translation>
+        </message>
+        <message>
+            <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="502" />
+            <source>Off</source>
+            <translation>關閉</translation>
+        </message>
+    </context>
+    <context>
         <name>manager</name>
         <message>
             <location filename="../utils/startup_dialog.py" line="704" />

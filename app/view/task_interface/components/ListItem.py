@@ -37,6 +37,12 @@ from qfluentwidgets import (
 from app.core.Item import TaskItem, ConfigItem
 from app.common.constants import _RESOURCE_, _CONTROLLER_, POST_ACTION
 from app.core.core import ServiceCoordinator
+from app.core.utils.option_binding import (
+    ENTRY_RESERVED_KEYS,
+    get_binding_active_map,
+    normalize_target_entries,
+    select_active_entry,
+)
 
 
 class ClickableLabel(BodyLabel):
@@ -705,6 +711,28 @@ class TaskListItem(BaseListItem):
         for key, value in task_option.items():
             # 跳过特殊键（如 _speedrun_config）
             if key.startswith("_"):
+                continue
+
+            if isinstance(value, list):
+                active_map = get_binding_active_map(task_option)
+                active_entry = select_active_entry(
+                    normalize_target_entries(value), active_map.get(key)
+                )
+                if not active_entry:
+                    continue
+                self._extract_option_values(
+                    {key: active_entry}, result, interface_options
+                )
+                for nested_key, nested_value in active_entry.items():
+                    if (
+                        nested_key in ENTRY_RESERVED_KEYS
+                        or nested_key.startswith("_")
+                        or nested_key in task_option
+                    ):
+                        continue
+                    self._extract_option_values(
+                        {nested_key: nested_value}, result, interface_options
+                    )
                 continue
 
             # 如果 value 是字典

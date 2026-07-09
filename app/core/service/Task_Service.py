@@ -5,6 +5,15 @@ from app.utils.logger import logger
 from app.core.service.Config_Service import ConfigService
 from app.core.Item import TaskItem, CoreSignalBus
 from app.common.constants import _RESOURCE_, _CONTROLLER_
+from app.core.utils.option_binding import (
+    BINDING_ACTIVE_KEY,
+    get_active_target_entry,
+    get_binding_active_map,
+    iter_binding_sources,
+    normalize_target_entries,
+    option_payload_value,
+    upsert_entry_by_value,
+)
 
 # 速通配置默认值
 DEFAULT_SPEEDRUN_CONFIG: Dict[str, Any] = {
@@ -224,6 +233,13 @@ class TaskService:
             option_type = (option_template.get("type") or "select").lower()
 
             current_option = task.task_option[option_key]
+            is_bound_target_array = isinstance(current_option, list)
+            current_option_array = current_option if is_bound_target_array else None
+            if is_bound_target_array:
+                current_option = get_active_target_entry(task.task_option, option_key)
+                if not isinstance(current_option, dict):
+                    current_option = {}
+
             if not isinstance(current_option, dict):
                 current_option = {}
                 task.task_option[option_key] = current_option
@@ -250,6 +266,14 @@ class TaskService:
                     if not isinstance(current_option.get("value"), dict):
                         current_option["value"] = {}
                     current_option["value"].update(preset_value)
+
+            if is_bound_target_array and current_option_array is not None:
+                task.task_option[option_key] = upsert_entry_by_value(
+                    current_option_array, current_option
+                )
+                active_map = get_binding_active_map(task.task_option)
+                active_map[option_key] = current_option.get("value")
+                task.task_option[BINDING_ACTIVE_KEY] = active_map
 
     def _update_children_visibility_select(
         self,
@@ -651,6 +675,24 @@ class TaskService:
                     option, option_template
                 )
                 task_default_option[option] = option_defaults
+
+        task_form_structure = {
+            option: interface_options.get(option, {})
+            for option in task.get("option", [])
+            if option in interface_options
+        }
+        binding_active: dict[str, Any] = {}
+        for _source_key, target_key in iter_binding_sources(
+            task_form_structure, logger=logger
+        ):
+            target_payload = task_default_option.get(target_key)
+            if target_payload is not None:
+                binding_active[target_key] = option_payload_value(target_payload)
+                task_default_option[target_key] = normalize_target_entries(
+                    target_payload
+                )
+        if binding_active:
+            task_default_option[BINDING_ACTIVE_KEY] = binding_active
 
         # 追加速通配置（使用 interface 或默认值）
         # 注意：基础任务（Controller, Resource, Post-Action）不需要 speedrun_config

@@ -11,6 +11,12 @@
 
 from typing import Dict, Any, List, Optional
 from app.utils.logger import logger
+from app.core.utils.option_binding import (
+    ENTRY_RESERVED_KEYS,
+    get_binding_active_map,
+    normalize_target_entries,
+    select_active_entry,
+)
 
 
 # ==================== 子选项 Key 解析器 ====================
@@ -219,6 +225,7 @@ def get_pipeline_override_from_task_option(
                 )
     else:
         # 非 Resource 任务，按原来的逻辑处理所有选项
+        binding_active = get_binding_active_map(task_options)
         for option_name, option_value in task_options.items():
             # 跳过内部字段和 resource_options 字段本身
             # 兼容：基础 Resource 任务会在根级保存 "resource"（资源选择），它不是可映射到 option 的 UI 选项
@@ -229,11 +236,50 @@ def get_pipeline_override_from_task_option(
             ):
                 continue
             # 处理选项（包括递归处理子选项）
-            _process_option_recursive(
-                options, option_name, option_value, merged_override
+            _process_task_option_value(
+                options,
+                task_options,
+                option_name,
+                option_value,
+                binding_active,
+                merged_override,
             )
 
     return merged_override
+
+
+def _process_task_option_value(
+    options: Dict[str, Any],
+    task_options: Dict[str, Any],
+    option_name: str,
+    option_value: Any,
+    binding_active: Dict[str, Any],
+    merged_override: Dict[str, Any],
+) -> None:
+    if isinstance(option_value, list):
+        entries = normalize_target_entries(option_value)
+        active_entry = select_active_entry(entries, binding_active.get(option_name))
+        if not active_entry:
+            logger.warning(f"绑定选项 '{option_name}' 没有可用的 active entry")
+            return
+
+        _process_option_recursive(
+            options, option_name, active_entry, merged_override
+        )
+
+        for nested_name, nested_value in active_entry.items():
+            if (
+                nested_name in ENTRY_RESERVED_KEYS
+                or nested_name.startswith("_")
+                or nested_name in task_options
+            ):
+                continue
+            _process_option_recursive(
+                options, nested_name, nested_value, merged_override
+            )
+        return
+
+    _process_option_recursive(options, option_name, option_value, merged_override)
 
 
 def _process_option_recursive(

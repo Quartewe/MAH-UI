@@ -814,6 +814,7 @@ class OptionWidget(QWidget, ResourceSettingMixin, PostActionSettingMixin):
         :param value: 选项值
         """
         try:
+            self.option_form_widget.prepare_binding_for_change(key)
             # 获取当前所有配置
             all_config = self.get_current_form_config()
             # 调用OptionService的update_options方法保存选项

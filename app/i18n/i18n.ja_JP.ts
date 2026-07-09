@@ -512,6 +512,30 @@
     </message>
 </context>
 <context>
+    <name>OptionFormWidget</name>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="448"/>
+        <source>Global Settings</source>
+        <translation>グローバル設定</translation>
+    </message>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="450"/>
+        <source>{count} item(s)</source>
+        <translation>{count} 件</translation>
+    </message>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="501"/>
+        <source>On</source>
+        <translation>オン</translation>
+    </message>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="502"/>
+        <source>Off</source>
+        <translation>オフ</translation>
+    </message>
+</context>
+
+<context>
     <name></name>
     <message>
         <source>Confirm</source>

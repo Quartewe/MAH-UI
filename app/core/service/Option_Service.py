@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional
 
 from app.core.service.Task_Service import TaskService
 from app.core.Item import CoreSignalBus
+from app.core.utils.option_binding import iter_binding_sources
 
 
 class OptionService:
@@ -48,7 +49,9 @@ class OptionService:
         self.current_options = {}
         self.form_structure = {}
 
-    def _on_option_updated(self, option_data: Dict[str, Any]) -> bool:
+    def _on_option_updated(
+        self, option_data: Dict[str, Any], remove_keys: Optional[list[str]] = None
+    ) -> bool:
         """当选项更新时保存到当前任务"""
         if not self.current_task_id:
             return False
@@ -58,6 +61,8 @@ class OptionService:
             return False
 
         # 更新任务中的选项并持久化
+        for key in remove_keys or []:
+            task.task_option.pop(key, None)
         task.task_option.update(option_data)
 
         # 基础任务不应该包含 speedrun_config
@@ -104,9 +109,23 @@ class OptionService:
 
     def update_options(self, options: Dict[str, Any]) -> bool:
         """批量更新选项"""
+        remove_keys = self._binding_source_keys_to_remove(options)
         # 批量更新本地选项字典
+        for key in remove_keys:
+            self.current_options.pop(key, None)
         self.current_options.update(options)
-        return self._on_option_updated(options)
+        return self._on_option_updated(options, remove_keys=remove_keys)
+
+    def _binding_source_keys_to_remove(self, options: Dict[str, Any]) -> list[str]:
+        if not isinstance(self.form_structure, dict):
+            return []
+        remove_keys: list[str] = []
+        for source_key, _target_key in iter_binding_sources(
+            self.form_structure, logger=None
+        ):
+            if source_key not in options:
+                remove_keys.append(source_key)
+        return remove_keys
 
     def get_form_structure(self) -> Optional[Dict[str, Any]]:
         """获取当前表单结构"""
@@ -181,6 +200,14 @@ class OptionService:
             description = option_def["doc"]
         if description:
             field_config["description"] = description
+
+        binding = option_def.get("binding")
+        if isinstance(binding, str) and binding:
+            field_config["binding"] = [binding]
+        elif isinstance(binding, list):
+            field_config["binding"] = [
+                item for item in binding if isinstance(item, str) and item
+            ]
 
         # 复制 icon 信息（如果有）
         self._copy_icon_from_source(field_config, option_def)

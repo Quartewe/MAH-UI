@@ -4402,6 +4402,29 @@ Below is the detailed stack trace. You can copy it and report to the developer:<
     </message>
 </context>
 <context>
+    <name>OptionFormWidget</name>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="448"/>
+        <source>Global Settings</source>
+        <translation>全局设置</translation>
+    </message>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="450"/>
+        <source>{count} item(s)</source>
+        <translation>{count} 项</translation>
+    </message>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="501"/>
+        <source>On</source>
+        <translation>开启</translation>
+    </message>
+    <message>
+        <location filename="../view/task_interface/components/Option_Framework/OptionFormWidget.py" line="502"/>
+        <source>Off</source>
+        <translation>关闭</translation>
+    </message>
+</context>
+<context>
     <name>WxPusherNoticeType</name>
     <message>
         <location filename="../view/setting_interface/widget/NoticeType.py" line="385"/>
