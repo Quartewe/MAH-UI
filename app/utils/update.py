@@ -802,13 +802,14 @@ class BaseUpdate(QThread):
         软件增量更新时保护不可被覆盖的目录。
 
         - resource/index, resource/base/image/{ar,character}: 由 mah_res 合并而来
-        - _internal: PyInstaller 构建产物，被更新器进程锁定，热更新会导致 DLL 混合版本卡死
+
+        软件更新由等待主程序退出后的独立 onefile updater 执行，_internal
+        必须允许随 MAH.exe 一起按差异更新。
         """
         return [
             Path("resource/index"),
             Path("resource/base/image/ar"),
             Path("resource/base/image/character"),
-            Path("_internal"),
         ]
 
     def _sync_interface_version(self, bundle_path_obj: Path, version: str | None) -> bool:

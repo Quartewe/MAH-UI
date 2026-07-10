@@ -1457,7 +1457,9 @@ def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
     软件增量更新时保护不可被覆盖的目录。
 
     - resource/index, resource/base/image/{ar,character}: 由 mah_res 合并而来
-    - _internal: PyInstaller 构建产物，被更新器进程锁定，热更新会导致 DLL 混合版本卡死
+
+    独立更新器为 onefile，并且会等待主程序退出，因此可以安全覆盖增量包中
+    实际发生变化的 _internal 文件，使其与新版 MAH.exe 保持一致。
     """
     target = str((metadata or {}).get("target", "")).strip().lower()
     if target != "software":
@@ -1466,7 +1468,6 @@ def _software_protected_dirs_from_metadata(metadata: dict | None) -> list[Path]:
         Path("resource/index"),
         Path("resource/base/image/ar"),
         Path("resource/base/image/character"),
-        Path("_internal"),
     ]
 
 
