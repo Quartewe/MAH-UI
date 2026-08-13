@@ -900,9 +900,9 @@ class OptionItemWidget(QWidget):
                     # 使用 child_name 作为配置键，如果没有 name 则回退到 child_key
                     config_key = child_name if child_name else child_key
                     
-                    # 检查子选项是否被隐藏（当前选中值不等于此子选项的键值时，该子选项被隐藏）
-                    is_active_child = child_key in active_child_keys
-                    is_hidden = not (is_active_child and child_widget.isVisible())
+                    # hidden 表示不属于当前 case；Qt 的有效可见性还会受到
+                    # 父页面和动画影响，不能作为持久化配置的判断依据。
+                    is_hidden = child_key not in active_child_keys
                     
                     # 对于 lineedit 类型的子选项，如果只有 value，直接使用值
                     if child_widget.config_type == "lineedit" and "children" not in child_option:

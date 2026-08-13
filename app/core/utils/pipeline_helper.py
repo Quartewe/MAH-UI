@@ -287,6 +287,8 @@ def _process_option_recursive(
     option_name: str,
     option_value: Any,
     merged_override: Dict[str, Any],
+    *,
+    active_from_parent: bool = False,
 ) -> None:
     """递归处理选项及其子选项
 
@@ -302,7 +304,11 @@ def _process_option_recursive(
         return
 
     # 如果选项本身被标记为隐藏，直接跳过
-    if isinstance(option_value, dict) and option_value.get("hidden", False):
+    if (
+        not active_from_parent
+        and isinstance(option_value, dict)
+        and option_value.get("hidden", False)
+    ):
         logger.debug(f"跳过隐藏的选项: {option_name}")
         return
 
@@ -315,22 +321,35 @@ def _process_option_recursive(
     # 深度合并
     _deep_merge_dict(merged_override, option_override)
 
-    # 递归处理子选项（只处理可见的）
+    # 递归处理子选项。interface 中当前 case 的 option 列表是激活状态的
+    # 权威来源；持久化的 hidden 仅用于兼容无法从 interface 推导的旧结构。
     if children:
+        active_child_options = _get_active_child_option_names(
+            options, option_name, actual_value
+        )
         for child_key, child_data in children.items():
-            # 检查子选项是否隐藏
-            if isinstance(child_data, dict) and child_data.get("hidden", False):
-                logger.debug(f"跳过隐藏的子选项: {child_key}")
-                continue
-
             # 从子选项 key 中提取实际的选项名称
             # 格式: {父选项名}_child_{触发case名}_{子选项名}_{索引}
             actual_option_name = _extract_child_option_name(child_key)
 
-            if actual_option_name:
-                _process_option_recursive(
-                    options, actual_option_name, child_data, merged_override
-                )
+            if not actual_option_name:
+                continue
+
+            if active_child_options is not None:
+                if actual_option_name not in active_child_options:
+                    logger.debug(f"跳过非当前 case 的子选项: {child_key}")
+                    continue
+            elif isinstance(child_data, dict) and child_data.get("hidden", False):
+                logger.debug(f"跳过隐藏的子选项: {child_key}")
+                continue
+
+            _process_option_recursive(
+                options,
+                actual_option_name,
+                child_data,
+                merged_override,
+                active_from_parent=active_child_options is not None,
+            )
 
 
 def _extract_option_value_and_children(
@@ -375,6 +394,49 @@ def _extract_child_option_name(child_key: str) -> str | None:
     return _child_key_parser.extract_option_name(child_key)
 
 
+def _get_active_child_option_names(
+    options: Dict[str, Any], option_name: str, option_value: Any
+) -> set[str] | None:
+    """Return child option names enabled by the currently selected case.
+
+    ``None`` means the interface cannot describe the active children, so callers
+    should fall back to the persisted ``hidden`` marker for compatibility.
+    """
+    option_config = options.get(option_name)
+    if not isinstance(option_config, dict):
+        return None
+
+    option_type = option_config.get("type", "select")
+    cases = option_config.get("cases", [])
+
+    if option_type in ("select", "switch") and isinstance(option_value, str):
+        selected_case = _find_select_case(option_config, option_value)
+        if selected_case is None:
+            return None
+        child_names = selected_case.get("option", [])
+        if not isinstance(child_names, list):
+            return set()
+        return {name for name in child_names if isinstance(name, str) and name}
+
+    if option_type == "checkbox" and isinstance(option_value, list):
+        selected_names = {str(name) for name in option_value}
+        child_names: set[str] = set()
+        for case in cases:
+            if (
+                not isinstance(case, dict)
+                or str(case.get("name", "")) not in selected_names
+            ):
+                continue
+            case_options = case.get("option", [])
+            if isinstance(case_options, list):
+                child_names.update(
+                    name for name in case_options if isinstance(name, str) and name
+                )
+        return child_names
+
+    return None
+
+
 def _get_option_pipeline_override(
     options: Dict[str, Any], option_name: str, option_value: str | Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -410,11 +472,25 @@ def _get_select_pipeline_override(
     option_config: Dict[str, Any], case_name: str
 ) -> Dict[str, Any]:
     """获取 select 类型选项的 pipeline_override"""
+    selected_case = _find_select_case(option_config, case_name)
+    if selected_case is not None:
+        return selected_case.get("pipeline_override", {})
+
+    cases = option_config.get("cases", [])
+    available = [str(c.get("name", "")) for c in cases if isinstance(c, dict)]
+    logger.debug(f"未找到 case: {case_name}（可用: {available}）")
+    return {}
+
+
+def _find_select_case(
+    option_config: Dict[str, Any], case_name: str
+) -> Dict[str, Any] | None:
+    """按 select/switch 的兼容匹配规则查找 case。"""
     cases = option_config.get("cases", [])
     # 1) 优先精确匹配（保持行为不变）
     for case in cases:
-        if case.get("name") == case_name:
-            return case.get("pipeline_override", {})
+        if isinstance(case, dict) and case.get("name") == case_name:
+            return case
 
     # 2) 兼容 Yes/No 这类历史配置写法：转成 interface 常用的 yes/no
     normalized = (case_name or "").strip()
@@ -423,13 +499,13 @@ def _get_select_pipeline_override(
 
     # 3) 再做一次不区分大小写的匹配（用于 Yes/No vs yes/no 等）
     for case in cases:
+        if not isinstance(case, dict):
+            continue
         case_def_name = str(case.get("name", ""))
         if case_def_name.lower() == normalized.lower():
-            return case.get("pipeline_override", {})
+            return case
 
-    available = [str(c.get("name", "")) for c in cases]
-    logger.debug(f"未找到 case: {case_name}（可用: {available}）")
-    return {}
+    return None
 
 
 def _get_checkbox_pipeline_override(

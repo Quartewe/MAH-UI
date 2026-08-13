@@ -159,9 +159,9 @@ class SwitchOptionItem(OptionItemBase):
                 # 使用 child_name 作为配置 key（如果存在），否则使用内部 key
                 config_key = child_name if child_name else child_key
 
-                # 检查子选项是否被隐藏
-                is_active_child = child_key in active_child_keys
-                is_hidden = not (is_active_child and child_widget.isVisible())
+                # hidden 只由当前 switch case 决定。父页面或动画导致的
+                # isVisible() == False 不代表这个子选项在配置中未激活。
+                is_hidden = child_key not in active_child_keys
 
                 # 对于 input 类型的子选项，如果只有 value，直接使用值
                 if child_widget.config_type in ["input", "inputs"] and "children" not in child_option:

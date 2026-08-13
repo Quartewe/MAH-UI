@@ -155,9 +155,9 @@ class ComboBoxOptionItem(OptionItemBase):
                 # 使用 child_name 作为配置 key（如果存在），否则使用内部 key
                 config_key = child_name if child_name else child_key
 
-                # 检查子选项是否被隐藏
-                is_active_child = child_key in active_child_keys
-                is_hidden = not (is_active_child and child_widget.isVisible())
+                # hidden 表示该子选项不属于当前 case，而不是 Qt 控件此刻是否可见。
+                # isVisible() 会受父页面切换和折叠动画影响，不能用于持久化业务状态。
+                is_hidden = child_key not in active_child_keys
 
                 # 对于 input 类型的子选项，如果只有 value，直接使用值
                 if child_widget.config_type in ["input", "inputs"] and "children" not in child_option:

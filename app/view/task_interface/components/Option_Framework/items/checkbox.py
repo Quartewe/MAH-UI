@@ -199,9 +199,10 @@ class CheckBoxOptionItem(OptionItemBase):
             child_name = child_widget.config.get("name", "")
             config_key = child_name if child_name else child_key
 
-            # 判断该子选项所属的 case 是否被选中
+            # hidden 只由所属 case 是否选中决定，不能依赖 Qt 控件的有效可见性；
+            # 父页面切换或折叠动画也会让 isVisible() 暂时返回 False。
             option_value = self.get_option_value_for_child_key(child_key)
-            is_active = option_value in selected_set and child_widget.isVisible()
+            is_active = option_value in selected_set
 
             if child_widget.config_type in ["input", "inputs"] and "children" not in child_option:
                 if not is_active:

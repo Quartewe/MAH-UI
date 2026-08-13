@@ -488,3 +488,5 @@ tasks/*
 
 app/plugins/*
 app/plugins
+
+tests/
