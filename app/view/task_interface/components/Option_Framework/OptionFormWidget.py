@@ -599,14 +599,22 @@ class OptionFormWidget(QWidget):
             )
             entries = normalize_target_entries(existing_payload)
             new_entry = ensure_entry_payload(target_payload)
+            replace_keys: set[str] = set()
 
             if not self._is_binding_switch_global(source_key):
                 source_payload = raw_options.get(source_key)
                 if source_payload is not None:
                     new_entry[source_key] = source_payload
+                    # The form returns a complete source snapshot. Replace its
+                    # root so stale fields from older storage shapes cannot survive.
+                    replace_keys.add(source_key)
                 result.pop(source_key, None)
 
-            result[target_key] = upsert_entry_by_value(entries, new_entry)
+            result[target_key] = upsert_entry_by_value(
+                entries,
+                new_entry,
+                replace_keys=replace_keys,
+            )
 
         if active_map:
             result[BINDING_ACTIVE_KEY] = active_map

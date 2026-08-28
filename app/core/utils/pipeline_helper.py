@@ -313,7 +313,9 @@ def _process_option_recursive(
         return
 
     # 提取实际的选项值和子选项
-    actual_value, children = _extract_option_value_and_children(option_value)
+    actual_value, children = _extract_option_value_and_children(
+        option_value, options.get(option_name)
+    )
 
     # 获取该选项的 pipeline_override
     option_override = _get_option_pipeline_override(options, option_name, actual_value)
@@ -353,7 +355,7 @@ def _process_option_recursive(
 
 
 def _extract_option_value_and_children(
-    option_value: Any,
+    option_value: Any, option_config: Dict[str, Any] | None = None
 ) -> tuple[Any, Dict[str, Any] | None]:
     """从选项值中提取实际值和子选项
 
@@ -373,6 +375,25 @@ def _extract_option_value_and_children(
     # 检查是否是复杂格式（包含 value 字段）
     if "value" in option_value:
         actual_value = option_value["value"]
+        if isinstance(option_config, dict) and option_config.get("type") == "input":
+            # Bound options saved by older versions can contain both a wrapped
+            # value and newer direct fields. Direct fields reflect the latest UI.
+            input_names = {
+                item.get("name")
+                for item in option_config.get("inputs", [])
+                if isinstance(item, dict) and item.get("name")
+            }
+            direct_values = {
+                name: option_value[name]
+                for name in input_names
+                if name in option_value
+            }
+            if direct_values:
+                merged_value = (
+                    dict(actual_value) if isinstance(actual_value, dict) else {}
+                )
+                merged_value.update(direct_values)
+                actual_value = merged_value
         children = option_value.get("children")
         return actual_value, children
 

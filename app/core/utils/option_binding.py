@@ -174,11 +174,15 @@ def deep_merge_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 
 
 def upsert_entry_by_value(
-    entries: list[Dict[str, Any]], entry: Dict[str, Any]
+    entries: list[Dict[str, Any]],
+    entry: Dict[str, Any],
+    *,
+    replace_keys: Iterable[str] = (),
 ) -> list[Dict[str, Any]]:
     normalized_entries = normalize_target_entries(entries)
     normalized_entry = ensure_entry_payload(entry)
     entry_key = binding_value_key(normalized_entry.get("value"))
+    keys_to_replace = set(replace_keys)
 
     result: list[Dict[str, Any]] = []
     replaced = False
@@ -186,6 +190,8 @@ def upsert_entry_by_value(
     for existing in normalized_entries:
         if binding_value_key(existing.get("value")) == entry_key:
             merged = deepcopy(existing)
+            for key in keys_to_replace:
+                merged.pop(key, None)
             deep_merge_dict(merged, normalized_entry)
             result.append(merged)
             replaced = True
