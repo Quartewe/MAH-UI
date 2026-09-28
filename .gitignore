@@ -489,4 +489,5 @@ tasks/*
 app/plugins/*
 app/plugins
 
-tests/
+tests/*
+!tests/test_resource_reset.py

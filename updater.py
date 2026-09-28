@@ -925,6 +925,9 @@ def perform_full_update(package_path: str, metadata_path: str, metadata: dict) -
         return False
 
     metadata = metadata or {}
+    if str(metadata.get("target", "")).strip().lower() == "resource":
+        return _perform_resource_full_update(package_path, metadata)
+
     temp_dir = _extract_zip_to_temp(Path(package_path))
     if not temp_dir:
         _handle_full_update_failure(package_path, metadata_path, metadata)
@@ -952,6 +955,52 @@ def perform_full_update(package_path: str, metadata_path: str, metadata: dict) -
     if delete_result.backup_dir:
         shutil.rmtree(delete_result.backup_dir, ignore_errors=True)
     return True
+
+
+def _perform_resource_full_update(package_path: str, metadata: dict) -> bool:
+    """资源全量包只覆盖 resource 内的图片和索引，不清理程序目录。"""
+    import zipfile
+
+    try:
+        bundle_path = _get_bundle_path_from_metadata(metadata)
+        if not bundle_path:
+            raise FileNotFoundError("找不到资源重置的目标目录")
+        project_path = Path(bundle_path)
+        interface_paths, interface_data = _load_interface_data(project_path)
+        if not interface_data:
+            raise ValueError("资源重置需要有效的 interface 配置")
+
+        # 使用本次操作独有的临时目录，避免混入之前热更新留下的文件。
+        with tempfile.TemporaryDirectory(prefix="mah_resource_reset_") as temp_dir:
+            extracted_root = Path(temp_dir)
+            with zipfile.ZipFile(package_path, "r", metadata_encoding="utf-8") as archive:
+                archive.extractall(extracted_root)
+            payload_root = _resolve_payload_root(extracted_root)
+            for name in ("image", "index"):
+                source = payload_root / name
+                if not source.is_dir() or not any(p.is_file() for p in source.rglob("*")):
+                    raise ValueError(f"资源全量包缺少有效的 {name} 目录")
+
+            image_applied, image_skipped, index_applied, index_skipped = (
+                _apply_resource_hotfix(payload_root, project_path)
+            )
+            version = str(metadata.get("version") or "").strip()
+            if version and not _update_interface_resource_version(
+                interface_paths, version
+            ):
+                raise RuntimeError("资源文件已覆盖，但资源版本号同步失败")
+            update_logger.info(
+                "资源重置完成: image 应用 %s 跳过 %s, index 应用 %s 跳过 %s, 目标=%s",
+                image_applied,
+                image_skipped,
+                index_applied,
+                index_skipped,
+                project_path / "resource",
+            )
+        return True
+    except Exception:
+        update_logger.exception("资源重置失败")
+        return False
 
 
 def safe_delete_paths(relative_paths):
@@ -2029,7 +2078,12 @@ def standard_update():
 
     success = False
     if metadata:
-        if source == "github":
+        if (
+            str(metadata.get("target", "")).strip().lower() == "resource"
+            and mode == "full"
+        ):
+            success = perform_full_update(package_path, metadata_path, metadata)
+        elif source == "github":
             if mode == "full":
                 success = perform_full_update(package_path, metadata_path, metadata)
             else:
