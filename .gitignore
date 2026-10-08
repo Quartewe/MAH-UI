@@ -491,3 +491,5 @@ app/plugins
 
 tests/*
 !tests/test_resource_reset.py
+
+.review
